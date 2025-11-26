@@ -13,12 +13,135 @@ library(FactoMineR)
 library(factoextra)
 library(Rdimtools)
 library(readr)
+library(janitor)
+library(knitr)
 ```
 
 
-Loading the dataset
-```{r}
+Si carica il dataset
+```{r, echo = FALSE}
 support2 <- read_csv("support2.csv")
-View(support2)
+
+data = support2
+```
+
+#Preprocessing
+
+Ricodifico correttamente il nome delle colonne
+
+```{r}
+colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
+```
+
+
+Controllo la codifica delle variabili
+```{r}
+data |> 
+  glimpse()
+```
+
+Prima ricodifica (type delle variabili) e scarto delle variabili derivate da modelli statistici
+```{r}
+data = data |>
+  mutate(
+    across(c(where(is.character), death, hospdead, 
+                  diabetes, income, dementia), ~ factor(.x))
+  ) |> 
+  select(-c(scoma, sps, surv2m, surv6m))
+```
+
+
+
+#Analisi Esplorativa
+
+Conteggio dei valori mancanti
+```{r}
+tibble(
+  variabile = names(data),
+  n_na      = colSums(is.na(data)),
+  perc_na   = colMeans(is.na(data)) * 100
+) |>
+  arrange(desc(perc_na))
+```
+
+Analisi dettagliati degli Na delle prime 4 variabili con più Na
+```{r}
+vars <- c("bun", "urine", "glucose", "adlp")
+
+data |> 
+  filter(death == "1") |> 
+  summarise(across(all_of(vars), ~ sum(is.na(.)))) |> 
+  pivot_longer(everything(),
+               names_to = "variabile",
+               values_to = "n_mancanti")
+```
+adlp è una variabile compilata dal paziente: siccome presenta più del 60% di Na, si valuta l'esclusione
+
+
+Outlier detection usando IQR Rule
+```{r}
+data |> 
+  select(where(is.numeric)) |>
+  map_df(function(x){
+    Q1 <- quantile(x, 0.25, na.rm = TRUE)
+    Q3 <- quantile(x, 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+    tibble(
+      n_outlier = sum(x < Q1 - 1.5*IQR | x > Q3 + 1.5*IQR, na.rm = TRUE),
+      perc_outlier = mean(x < Q1 - 1.5*IQR | x > Q3 + 1.5*IQR, na.rm = TRUE)*100
+    )
+  }) |>
+  mutate(variabile = names(data |> select(where(is.numeric)))) |>
+  select(variabile, everything()) |>
+  arrange(desc(n_outlier))
+```
+
+
+Visualizzo la distribuzione delle variabili con circa il 10% di outliers
+```{r}
+vars <- c("hday", "crea", "bili", "charges",
+          "dnrday", "slos", "totcst", "totmcst")
+
+plots_hist <- map(
+  vars,
+  ~ lattice::histogram(
+      as.formula(paste("~", .x)),
+      data = data,
+      main = paste(.x),
+      col = "lightblue",
+      border = "grey30"
+    )
+)
+
+for(p in plots_hist) print(p)
+```
+
+
+```{r}
+num_data <- data[, sapply(data, is.numeric)]
+
+num_data = num_data |> 
+  select(-id)
+
+corr_mat <- cor(num_data, use = "pairwise.complete.obs")
+
+levelplot(
+  corr_mat,
+  scales = list(x = list(rot = 45)),
+  xlab = "Variabili",
+  ylab = "Variabili",
+  main = "Heatmap delle correlazioni",
+  col.regions = colorRampPalette(c("blue", "white", "red"))(100)
+)
+```
+
+
+Hierarchical Clustering delle colonne
+```{r}
+dist_mat <- as.dist(1 - corr_mat)
+
+hc <- hclust(dist_mat, method = "complete")
+
+plot(hc, main = "Hierarchical Clustering")
 ```
 
