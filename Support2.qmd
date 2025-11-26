@@ -1,0 +1,24 @@
+---
+title: "Exam"
+author: "Angelo Capasso e Mariateresa Russo"
+format: html
+editor: visual
+---
+
+```{r setup, include = FALSE, echo = FALSE}
+library(tidyverse)
+library(GGally)
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+library(Rdimtools)
+library(readr)
+```
+
+
+Loading the dataset
+```{r}
+support2 <- read_csv("support2.csv")
+View(support2)
+```
+
