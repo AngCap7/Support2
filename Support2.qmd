@@ -21,8 +21,8 @@ library(lattice)
 library(plotly)
 ```
 
-
 Si carica il dataset
+
 ```{r, echo = FALSE}
 support2 <- read_csv("support2.csv")
 
@@ -37,14 +37,15 @@ Ricodifico correttamente il nome delle colonne
 colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
 ```
 
-
 Controllo la codifica delle variabili
+
 ```{r}
 data |> 
   glimpse()
 ```
 
 Prima ricodifica (type delle variabili) e scarto delle variabili derivate da modelli statistici
+
 ```{r}
 data = data |>
   mutate(
@@ -54,11 +55,10 @@ data = data |>
   select(-c(scoma, sps, surv2m, surv6m))
 ```
 
-
-
 #Analisi Esplorativa
 
 Conteggio dei valori mancanti
+
 ```{r}
 tibble(
   variabile = names(data),
@@ -69,6 +69,7 @@ tibble(
 ```
 
 Analisi dettagliati degli Na delle prime 4 variabili con più Na
+
 ```{r}
 vars <- c("bun", "urine", "glucose", "adlp")
 
@@ -79,10 +80,11 @@ data |>
                names_to = "variabile",
                values_to = "n_mancanti")
 ```
+
 adlp è una variabile compilata dal paziente: siccome presenta più del 60% di Na, si valuta l'esclusione
 
-
 Outlier detection usando IQR Rule
+
 ```{r}
 data |> 
   select(where(is.numeric)) |>
@@ -100,8 +102,8 @@ data |>
   arrange(desc(n_outlier))
 ```
 
-
 Visualizzo la distribuzione delle variabili con circa il 10% di outliers
+
 ```{r}
 vars <- c("hday", "crea", "bili", "charges",
           "dnrday", "slos", "totcst", "totmcst")
@@ -119,7 +121,6 @@ plots_hist <- map(
 
 for(p in plots_hist) print(p)
 ```
-
 
 ```{r}
 num_data <- data[, sapply(data, is.numeric)]
@@ -139,8 +140,8 @@ levelplot(
 )
 ```
 
-
 Hierarchical Clustering delle colonne
+
 ```{r}
 dist_mat <- as.dist(1 - corr_mat)
 
@@ -149,8 +150,8 @@ hc <- hclust(dist_mat, method = "complete")
 plot(hc, main = "Hierarchical Clustering")
 ```
 
-
 Scaling delle variabili numeriche
+
 ```{r}
 data_scaled = data |> 
   select(-id) |> 
@@ -160,11 +161,7 @@ data_scaled = data |>
   ))
 ```
 
-
-Diagramma di dispersione tra:
-1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno);
-2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno);
-3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
+Diagramma di dispersione tra: 1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno); 2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno); 3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
 
 ```{r}
 sca1 = xyplot(
@@ -213,8 +210,7 @@ grid.arrange(
 )
 ```
 
-
-Semplice K-medie su queste 3 variabili più discriminanti 
+Semplice K-medie su queste 3 variabili più discriminanti
 
 ```{r}
 data_scaled |> 
@@ -264,8 +260,8 @@ data_scaled |>
   })()
 ```
 
+##PROVA Classica Tandem Analysis su tutte le variabili numeriche, le prime due dimensioni spiegano il 50 % della varianza totale. Silhouhette suggerisce 2 clusters mentre Gap statistics ne identifica solo 1. Valutare questa discordanza
 
- ##PROVA## Classica Tandem Analysis su tutte le variabili numeriche, le prime due dimensioni spiegano il 50 % della varianza totale. Silhouhette suggerisce 2 clusters mentre Gap statistics ne identifica solo 1. Valutare questa discordanza
 ```{r}
 data_scaled |>
   # 1. Selezione variabili numeriche e rimozione NA
@@ -295,4 +291,3 @@ data_scaled |>
   })()
 
 ```
-
