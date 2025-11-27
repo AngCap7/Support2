@@ -15,6 +15,10 @@ library(Rdimtools)
 library(readr)
 library(janitor)
 library(knitr)
+library(patchwork)
+library(gridExtra)
+library(lattice)
+library(plotly)
 ```
 
 
@@ -143,5 +147,152 @@ dist_mat <- as.dist(1 - corr_mat)
 hc <- hclust(dist_mat, method = "complete")
 
 plot(hc, main = "Hierarchical Clustering")
+```
+
+
+Scaling delle variabili numeriche
+```{r}
+data_scaled = data |> 
+  select(-id) |> 
+  mutate(across(
+    where(is.numeric),
+    ~ as.numeric(scale(.x))
+  ))
+```
+
+
+Diagramma di dispersione tra:
+1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno);
+2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno);
+3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
+
+```{r}
+sca1 = xyplot(
+  hrt ~ meanbp,
+  data = data_scaled,
+  pch = 16,              
+  cex = 0.5,              
+  col = "steelblue",      
+  alpha = 0.5,            
+  xlab = "meanbp",
+  ylab = "hrt",
+  main = "meanbp vs hrt"
+)
+
+sca2 = xyplot(
+  hrt ~ temp,
+  data = data_scaled,
+  pch = 16,              
+  cex = 0.5,              
+  col = "steelblue",      
+  alpha = 0.5,            
+  xlab = "meanbp",
+  ylab = "hrt",
+  main = "temp vs hrt"
+)
+
+sca3 = xyplot(
+  meanbp ~ temp,
+  data = data_scaled,
+  pch = 16,              
+  cex = 0.5,              
+  col = "steelblue",      
+  alpha = 0.5,            
+  xlab = "meanbp",
+  ylab = "hrt",
+  main = "meanbp vs temp"
+)
+
+
+
+grid.arrange(
+  sca1, sca2,
+  sca3,
+  ncol = 2,
+  heights = c(1, 1)   # prima riga: sca1 e sca2; seconda riga: sca3
+)
+```
+
+
+Semplice K-medie su queste 3 variabili più discriminanti 
+
+```{r}
+data_scaled |> 
+  select(meanbp, hrt, temp) |> 
+  na.omit() |> 
+  fviz_nbclust(kmeans, method = "silhouette")
+
+data_scaled |>
+  select(meanbp, hrt, temp) |>
+  na.omit() |>
+  (\(d3) {
+    km <- kmeans(d3, centers = 8, nstart = 200)
+   if (FALSE) {
+    p2d <- fviz_cluster(
+    km,
+    data = d3,
+    geom = "point",
+    ellipse = FALSE,
+    label = "none",
+    stand = FALSE,
+    axes = c(1,2),
+    xlab = "meanbp",
+    ylab = "hrt",
+    ggtheme = theme_minimal()
+    )
+  }
+  # ---- PLOT 3D (plotly) ----
+    p3d <- plotly::plot_ly(
+      x = d3$meanbp,
+      y = d3$hrt,
+      z = d3$temp,
+      type = "scatter3d",
+      mode = "markers",
+      color = factor(km$cluster),
+      colors = "Set1",
+      marker = list(size = 3)
+    ) |>
+      layout(
+        title = "3D K-means clustering (meanbp, hrt, temp)",
+        scene = list(
+          xaxis = list(title = "meanbp"),
+          yaxis = list(title = "hrt"),
+          zaxis = list(title = "temp")
+        )
+      )
+    p3d
+  })()
+```
+
+
+ ##PROVA## Classica Tandem Analysis su tutte le variabili numeriche, le prime due dimensioni spiegano il 50 % della varianza totale. Silhouhette suggerisce 2 clusters mentre Gap statistics ne identifica solo 1. Valutare questa discordanza
+```{r}
+data_scaled |>
+  # 1. Selezione variabili numeriche e rimozione NA
+  select(where(is.numeric)) |>
+  na.omit() |>
+  # 2. PCA
+  (\(df_num) {
+    pca_res <- PCA(df_num, ncp = 4, graph = FALSE)
+    pcs <- as.data.frame(pca_res$ind$coord[, 1:2])
+    
+    p1 <- fviz_nbclust(pcs, kmeans, method = "wss") + ggtitle("Elbow")
+    p2 <- fviz_nbclust(pcs, kmeans, method = "silhouette") + ggtitle("Silhouette")
+    p3 <- fviz_nbclust(pcs, kmeans, method = "gap_stat") + ggtitle("Gap Statistic")
+    
+    print(p1); print(p2); print(p3)
+    
+    km <- kmeans(pcs, centers = 2, nstart = 100)
+    
+    fviz_cluster(
+      km,
+      data = pcs,
+      geom = "point",
+      label = "none",
+      ellipse = FALSE,
+      ggtheme = theme_minimal()
+    )
+  })()
+
 ```
 
