@@ -21,25 +21,19 @@ library(lattice)
 library(plotly)
 ```
 
-Si carica il dataset
-
-```{r, echo = FALSE}
+```{r, echo = FALSE, warning=FALSE, include=FALSE}
 support2 <- read_csv("support2.csv")
 
 data = support2
 ```
 
-#Preprocessing
+# Preprocessing 1
 
-Ricodifico correttamente il nome delle colonne
+Ricodifica corretta per i nomi delle colonne
 
-```{r}
+```{r, include=FALSE}
 colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
-```
 
-Controllo la codifica delle variabili
-
-```{r}
 data |> 
   glimpse()
 ```
@@ -52,23 +46,33 @@ data = data |>
     across(c(where(is.character), death, hospdead, 
                   diabetes, income, dementia), ~ factor(.x))
   ) |> 
-  select(-c(scoma, sps, surv2m, surv6m))
+  select(-c(id, scoma, sps, surv2m, surv6m, sfdm2))
 ```
 
-#Analisi Esplorativa
+# Esplorative Data Analysis
 
+## Missing values
 Conteggio dei valori mancanti
 
 ```{r}
-tibble(
+missing_summary <- tibble(
   variabile = names(data),
   n_na      = colSums(is.na(data)),
   perc_na   = colMeans(is.na(data)) * 100
 ) |>
+  filter(n_na > 0) |>         
   arrange(desc(perc_na))
+
+missing_summary
+
+ggplot(missing_summary, aes(x = reorder(variabile, perc_na), y = perc_na)) +
+  geom_col(fill = "#8FD4B8") +
+  coord_flip() +
+  labs(title = "Variabili con valori mancanti",
+       x = "Variabile", y = "% NA")
 ```
 
-Analisi dettagliati degli Na delle prime 4 variabili con più Na
+Analisi dettagliata degli Na delle prime 4 variabili con più Na
 
 ```{r}
 vars <- c("bun", "urine", "glucose", "adlp")
@@ -83,6 +87,7 @@ data |>
 
 adlp è una variabile compilata dal paziente: siccome presenta più del 60% di Na, si valuta l'esclusione
 
+## Outlier detection
 Outlier detection usando IQR Rule
 
 ```{r}
@@ -114,19 +119,18 @@ plots_hist <- map(
       as.formula(paste("~", .x)),
       data = data,
       main = paste(.x),
-      col = "lightblue",
+      col = "#4BBAC3",
       border = "grey30"
     )
 )
 
 for(p in plots_hist) print(p)
 ```
+## Numerical Features
 
+### Correlation matrix
 ```{r}
 num_data <- data[, sapply(data, is.numeric)]
-
-num_data = num_data |> 
-  select(-id)
 
 corr_mat <- cor(num_data, use = "pairwise.complete.obs")
 
@@ -136,11 +140,29 @@ levelplot(
   xlab = "Variabili",
   ylab = "Variabili",
   main = "Heatmap delle correlazioni",
-  col.regions = colorRampPalette(c("blue", "white", "red"))(100)
+  col.regions = colorRampPalette(c("#2A5783", "white", "#F07F28"))(100)
 )
 ```
+### Density plot
+```{r}
+num_data %>%
+  pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
+  ggplot(aes(x = valore)) +
+  geom_density(fill = "#8FD4B8", alpha = 0.6) +
+  facet_wrap(~ variabile, scales = "free", ncol = 4) +  # griglia con 4 colonne
+  labs(title = "Density plot delle variabili numeriche",
+       x = "Value",
+       y = "Density") 
 
-Hierarchical Clustering delle colonne
+```
+
+Variabili come prg6m, prg2m sembrano avere distribuzioni discrete o con pochi valori distinti: si potrebbero trattare come categoriche 
+
+charges, totcst, totmcst mostrano code lunghe: candidate per trasformazioni logaritmiche
+
+adlp, adls, num.co: mostrano più picchi
+
+### Hierarchical Clustering
 
 ```{r}
 dist_mat <- as.dist(1 - corr_mat)
@@ -149,18 +171,72 @@ hc <- hclust(dist_mat, method = "complete")
 
 plot(hc, main = "Hierarchical Clustering")
 ```
+## Categorical Features
+```{r, warning=FALSE}
+data %>%
+  select(where(is.factor)) %>%
+  pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
+  ggplot(aes(x = valore, y = ..prop.., group = 1, fill = valor)) +
+  geom_bar(fill = "#8FD4B8") +
+  facet_wrap(~ variabile, scales = "free") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Distribuzione percentuale delle variabili categoriali",
+       x = "Categoria", y = "Percentuale") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none",
+        strip.text = element_text(size = 10))
 
-Scaling delle variabili numeriche
+```
 
+# Preprocessing 2
+## Feature removing and Manage missing values
+Rimozione Variabili con molti valori mancanti
+```{r}
+data <- data |> 
+  select(-c(bun, urine, glucose, adlp))
+```
+
+Rimozione variabili molto correlate
+```{r}
+data <- data |> 
+  select(-c(totmcst, totcst, avtisst, dnrday))
+# adls adlp
+# totmcst totcst charges
+# aps avtisst
+# dnrday slos
+```
+
+Rimozione osservazioni per cui ci sono pochi NA
+```{r}
+data <- data |>
+  drop_na(dnr, race, wblc, charges, crea)
+```
+
+Imputazione valori mancanti delle restanti variabili
+```{r}
+tibble(
+  variabile = names(data),
+  n_na      = colSums(is.na(data)),
+  perc_na   = colMeans(is.na(data)) * 100
+) |>
+  filter(n_na > 0) |>         
+  arrange(desc(perc_na))
+
+data <- data |>
+  mutate(income = fct_explicit_na(income, na_level = "nd"))
+```
+## Feature Scaling 
 ```{r}
 data_scaled = data |> 
-  select(-id) |> 
   mutate(across(
     where(is.numeric),
     ~ as.numeric(scale(.x))
   ))
 ```
 
+
+# Unsupervised Learning
 Diagramma di dispersione tra: 1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno); 2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno); 3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
 
 ```{r}
@@ -169,7 +245,7 @@ sca1 = xyplot(
   data = data_scaled,
   pch = 16,              
   cex = 0.5,              
-  col = "steelblue",      
+  col = "#86D0B9",      
   alpha = 0.5,            
   xlab = "meanbp",
   ylab = "hrt",
@@ -181,7 +257,7 @@ sca2 = xyplot(
   data = data_scaled,
   pch = 16,              
   cex = 0.5,              
-  col = "steelblue",      
+  col = "#86D0B9",      
   alpha = 0.5,            
   xlab = "meanbp",
   ylab = "hrt",
@@ -193,7 +269,7 @@ sca3 = xyplot(
   data = data_scaled,
   pch = 16,              
   cex = 0.5,              
-  col = "steelblue",      
+  col = "#86D0B9",      
   alpha = 0.5,            
   xlab = "meanbp",
   ylab = "hrt",
@@ -211,7 +287,6 @@ grid.arrange(
 ```
 
 Semplice K-medie su queste 3 variabili più discriminanti
-
 ```{r}
 data_scaled |> 
   select(meanbp, hrt, temp) |> 
@@ -259,6 +334,8 @@ data_scaled |>
     p3d
   })()
 ```
+## Feature Selection
+## Clustering
 
 ##PROVA Classica Tandem Analysis su tutte le variabili numeriche, le prime due dimensioni spiegano il 50 % della varianza totale. Silhouhette suggerisce 2 clusters mentre Gap statistics ne identifica solo 1. Valutare questa discordanza
 
@@ -291,3 +368,9 @@ data_scaled |>
   })()
 
 ```
+
+
+# Supervised Learning
+## Feature Selection
+## SVM
+## Interpretability

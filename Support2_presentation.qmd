@@ -1,0 +1,221 @@
+---
+title: "EXAM"
+author: "Mariateresa"
+format:
+  revealjs:
+    theme: solarized
+    transition: convex
+    slide-number: true
+    code-fold: true
+    code-overflow: wrap
+editor: visual
+---
+
+```{r setup, include = FALSE, echo = FALSE}
+library(tidyverse)
+library(GGally)
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+library(Rdimtools)
+library(readr)
+library(janitor)
+library(knitr)
+library(patchwork)
+library(gridExtra)
+library(lattice)
+library(plotly)
+```
+
+```{r, echo = FALSE, warning=FALSE, include=FALSE}
+support2 <- read_csv("support2.csv")
+
+data = support2
+```
+
+```{r, echo = FALSE, warning=FALSE, include=FALSE}
+colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
+
+data = data |>
+  mutate(
+    across(c(where(is.character), death, hospdead, 
+                  diabetes, income, dementia), ~ factor(.x))
+  ) |> 
+  select(-c(id, scoma, sps, surv2m, surv6m, sfdm2))
+```
+
+# Dataset
+
+## Numerical Features 
+<div style="font-size: 40%;">
+- **age**: età  
+- **slos**: giorni di degenza ospedaliera  
+- **d.time**: giorni di follow up  
+- **num.co**: numero di comorbidità  
+- **edu**: anni di istruzione  
+- **charges**: costo addebitato al paziente
+-**totcst**: costo dato dall'RCC index 
+-**totmcst**: costo reale addebbitato sfruttando bonus 
+- **avtisst**: punteggio che indica l'intensità delle cure  (Therapeutic Intervention Scoring System) 
+- **aps**: valuta le condizioni vitali (acute physiology score)
+- **meanbp**: pressione arteriosa media  
+- **wblc**: globuli bianchi  
+- **hrt**: frequenza cardiaca  
+- **resp**: frequenza respiratoria  
+- **temp**: temperatura corporea  
+- **pafi**: rapporto PaO2/FiO2  
+- **alb**: albumina  
+- **bili**: bilirubina  
+- **crea**: creatinina  
+- **sod**: sodio  
+- **ph**: pH sanguigno  
+- **glucose**, **bun**, **urine**  
+- **adlp**, **adls**: punteggi indicanti un livello di attività quotidiane svolte 
+- **dnrday**: giorno della decisione DNR  
+- **prg2m**, **prg6m**: probabilità di sopravvivenza
+</div>
+
+## Categorical Features
+<div style="font-size: 60%;">
+- **death**: 0 = vivo, 1 = deceduto  
+- **sex**: maschio / femmina  
+- **hospdead**: morte in ospedale (0/1)  
+- **diabetes**, **dementia**: presenza/assenza 
+- **dzgroup**: gruppo diagnostico (es. Lung Cancer, Cirrhosis, ARF/MOSF)  
+- **dzclass**: classe diagnostica più ampia  
+- **income**: categoria di reddito  
+- **race**: white, black, other  
+- **ca**: categoria tumore (no / locale / metastatico)  
+- **dnr**: stato DNR (do-not-resuscitate)  
+- **sfdm2**: stato funzionale a 2 mesi  
+</div>
+
+# Esplorative Data Analysis
+
+## Missing values
+```{r}
+missing_summary <- tibble(
+  variabile = names(data),
+  n_na      = colSums(is.na(data)),
+  perc_na   = colMeans(is.na(data)) * 100
+) |>
+  filter(n_na > 0) |>         
+  arrange(desc(perc_na))
+
+ggplot(missing_summary, aes(x = reorder(variabile, perc_na), y = perc_na)) +
+  geom_col(fill = "#8FD4B8") +
+  coord_flip() +
+  labs(title = "Variabili con valori mancanti",
+       x = "Variabile", y = "% NA")
+```
+## Numerical Features
+
+### Correlation matrix
+```{r}
+num_data <- data[, sapply(data, is.numeric)]
+
+corr_mat <- cor(num_data, use = "pairwise.complete.obs")
+
+levelplot(
+  corr_mat,
+  scales = list(x = list(rot = 45)),
+  xlab = "Variabili",
+  ylab = "Variabili",
+  main = "Heatmap delle correlazioni",
+  col.regions = colorRampPalette(c("#2A5783", "white", "#F07F28"))(100)
+)
+```
+
+---
+### Hierarchical Clustering
+```{r}
+dist_mat <- as.dist(1 - corr_mat)
+
+hc <- hclust(dist_mat, method = "complete")
+
+plot(hc, main = "Hierarchical Clustering")
+```
+
+## Categorical Features
+```{r, warning=FALSE}
+data %>%
+  select(where(is.factor)) %>%
+  pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
+  ggplot(aes(x = valore, y = ..prop.., group = 1, fill = valor)) +
+  geom_bar(fill = "#8FD4B8") +
+  facet_wrap(~ variabile, scales = "free") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Distribuzione percentuale delle variabili categoriali",
+       x = "Categoria", y = "Percentuale") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none",
+        strip.text = element_text(size = 10))
+
+```
+
+# Preprocessing
+
+## Manage Missing Values
+<div style="font-size: 60%;">
+-Rimozione Variabili con molti valori mancanti: bun, urine, glucose, adlp
+```{r}
+data <- data |> 
+  select(-c(bun, urine, glucose, adlp))
+```
+
+-Rimozione variabili molto correlate: totmcst, totcst, avtisst, dnrday
+```{r}
+data <- data |> 
+  select(-c(totmcst, totcst, avtisst, dnrday))
+# adls adlp
+# totmcst totcst charges
+# aps avtisst
+# dnrday slos
+```
+
+-Rimozione osservazioni per cui ci sono pochi NA nelle variabili: dnr, race, wblc, charges, crea
+```{r}
+data <- data |>
+  drop_na(dnr, race, wblc, charges, crea)
+```
+
+-Imputazione valori mancanti: income
+```{r}
+data <- data |>
+  mutate(income = fct_explicit_na(income, na_level = "nd"))
+```
+
+```{r, echo=FALSE}
+tibble(
+  variabile = names(data),
+  n_na      = colSums(is.na(data)),
+  perc_na   = colMeans(is.na(data)) * 100
+) |>
+  filter(n_na > 0) |>         
+  arrange(desc(perc_na))
+```
+</div>
+
+# CONTINUA DA QUI
+
+
+
+```{r,echo=FALSE,include=FALSE}
+data_scaled = data |> 
+  mutate(across(
+    where(is.numeric),
+    ~ as.numeric(scale(.x))
+  ))
+```
+
+
+# Unsupervised Learning
+## Feature Selection
+## Clustering
+
+# Supervised Learning
+## feature Selection
+## SVM
+## Interpretability
+
