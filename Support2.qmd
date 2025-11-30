@@ -6,6 +6,7 @@ editor: visual
 ---
 
 ```{r setup, include = FALSE, echo = FALSE}
+library(tidymodels)
 library(tidyverse)
 library(GGally)
 library(ggplot2)
@@ -220,6 +221,8 @@ data <- data |>
 # totmcst totcst charges
 # aps avtisst
 # dnrday slos
+
+tot_data = data
 ```
 
 Rimozione osservazioni per cui ci sono pochi NA
@@ -586,9 +589,139 @@ conf_mat
 
 
 # Supervised Learning
+```{r}
+tot_data_scaled = tot_data |> 
+  mutate(across(
+    where(is.numeric),
+    ~ as.numeric(scale(.x))))
 
+head(tot_data_scaled)
+```
+```{r}
+ggplot(tot_data_scaled, aes(x = death, y = ..prop.., group = 1)) +
+  geom_bar(fill = "#8FD4B8", color = "grey30") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Distribuzione della variabile target 'death'",
+    x = "Death",
+    y = "Percentuale"
+  ) +
+  theme_minimal(base_size = 14)
+```
+```{r}
+tot_data_scaled |>
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "variabile",
+    values_to = "valore"
+  ) |>
+  ggplot(aes(x = death, y = valore, fill = death)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "grey40") +
+  facet_wrap(~ variabile, scales = "free", ncol = 4) +
+  scale_fill_manual(values = c("#8FD4B8", "#F07F28")) +
+  labs(
+    title = "Boxplot delle variabili numeriche per categorie di death",
+    x = "Death",
+    y = "Valore"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(size = 10),
+    legend.position = "none"
+  )
+```
+
+```{r}
+cat_vars <- data_scaled |> select(where(is.factor))
+
+# Ciclo su tutte le variabili categoriche (escludendo death stessa)
+chi_results <- map_df(
+  setdiff(names(cat_vars), "death"),
+  function(var) {
+    tbl <- table(data_scaled$death, cat_vars[[var]])
+    test <- chisq.test(tbl)
+    tibble(
+      variabile = var,
+      statistic = test$statistic,
+      p_value   = test$p.value
+    )
+  }
+)
+
+# Ordina per significatività
+chi_results |> arrange(p_value)
+```
 ## Feature Selection
+```{r}
+
+```
+
+## Unbalanced class
+```{r}
+
+```
 
 ## SVM
+```{r}
+set.seed(6)
+
+# --- 1. Split stratificato ---
+split <- initial_split(data_scaled, prop = 0.8, strata = death)
+train <- training(split)
+test  <- testing(split)
+
+folds <- vfold_cv(train, v = 10, strata = death)
+
+# --- 2. Recipe di preprocessing ---
+svm_rec <- recipe(death ~ ., data = train) |>
+  step_impute_median(all_numeric_predictors()) |>   # imputazione numeriche
+  step_impute_mode(all_nominal_predictors()) |>     # imputazione categoriche
+  step_nzv(all_predictors()) |>                     # rimozione variabili quasi costanti
+  step_dummy(all_nominal_predictors()) |>           # dummy encoding
+  step_normalize(all_numeric_predictors())
+  # se target sbilanciato: step_smote(death)
+
+# --- 3. Specifica modello SVM RBF ---
+svm_spec <- svm_rbf(
+  mode = "classification",
+  cost = tune(),        # parametro C
+  rbf_sigma = tune()    # parametro gamma
+) |> 
+  set_engine("kernlab")
+
+svm_wf <- workflow() |>
+  add_model(svm_spec) |>
+  add_recipe(svm_rec)
+
+# --- 4. Griglia di tuning ---
+svm_params <- parameters(svm_spec)
+svm_grid   <- grid_regular(svm_params, levels = 5)
+
+# --- 5. Tuning con cross-validation ---
+svm_tuned <- tune_grid(
+  svm_wf,
+  resamples = folds,
+  grid = svm_grid,
+  metrics = metric_set(accuracy, roc_auc, precision, recall, f_meas),
+  control = control_grid(save_pred = TRUE)
+)
+
+collect_metrics(svm_tuned) |> arrange(desc(mean))
+
+# --- 6. Selezione best model ---
+best_params <- select_best(svm_tuned, metric = "roc_auc")
+svm_final_wf <- finalize_workflow(svm_wf, best_params)
+
+# --- 7. Fit finale e valutazione su test ---
+svm_final_fit <- last_fit(svm_final_wf, split)
+
+collect_metrics(svm_final_fit)
+
+# --- 8. Matrice di confusione ---
+svm_final_fit |> 
+  collect_predictions() |> 
+  conf_mat(truth = death, estimate = .pred_class)
+
+```
 
 ## Interpretability
