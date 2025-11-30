@@ -1,6 +1,6 @@
 ---
 title: "EXAM"
-author: "Mariateresa"
+author: "Mariateresa Russo e angelo Capasso"
 format:
   revealjs:
     theme: solarized
@@ -46,53 +46,54 @@ data = data |>
 
 # Dataset
 
-## Numerical Features 
-<div style="font-size: 40%;">
-- **age**: età  
-- **slos**: giorni di degenza ospedaliera  
-- **d.time**: giorni di follow up  
-- **num.co**: numero di comorbidità  
-- **edu**: anni di istruzione  
-- **charges**: costo addebitato al paziente
--**totcst**: costo dato dall'RCC index 
--**totmcst**: costo reale addebbitato sfruttando bonus 
-- **avtisst**: punteggio che indica l'intensità delle cure  (Therapeutic Intervention Scoring System) 
-- **aps**: valuta le condizioni vitali (acute physiology score)
-- **meanbp**: pressione arteriosa media  
-- **wblc**: globuli bianchi  
-- **hrt**: frequenza cardiaca  
-- **resp**: frequenza respiratoria  
-- **temp**: temperatura corporea  
-- **pafi**: rapporto PaO2/FiO2  
-- **alb**: albumina  
-- **bili**: bilirubina  
-- **crea**: creatinina  
-- **sod**: sodio  
-- **ph**: pH sanguigno  
-- **glucose**, **bun**, **urine**  
-- **adlp**, **adls**: punteggi indicanti un livello di attività quotidiane svolte 
-- **dnrday**: giorno della decisione DNR  
-- **prg2m**, **prg6m**: probabilità di sopravvivenza
-</div>
+## Numerical Features
+
+::: {style="font-size: 40%;"}
+-   **age**: età\
+-   **slos**: giorni di degenza ospedaliera\
+-   **d.time**: giorni di follow up\
+-   **num.co**: numero di comorbidità\
+-   **edu**: anni di istruzione\
+-   **charges**: costo addebitato al paziente -**totcst**: costo dato dall'RCC index -**totmcst**: costo reale addebbitato sfruttando bonus
+-   **avtisst**: punteggio che indica l'intensità delle cure (Therapeutic Intervention Scoring System)
+-   **aps**: valuta le condizioni vitali (acute physiology score)
+-   **meanbp**: pressione arteriosa media\
+-   **wblc**: globuli bianchi\
+-   **hrt**: frequenza cardiaca\
+-   **resp**: frequenza respiratoria\
+-   **temp**: temperatura corporea\
+-   **pafi**: rapporto PaO2/FiO2\
+-   **alb**: albumina\
+-   **bili**: bilirubina\
+-   **crea**: creatinina\
+-   **sod**: sodio\
+-   **ph**: pH sanguigno\
+-   **glucose**, **bun**, **urine**\
+-   **adlp**, **adls**: punteggi indicanti un livello di attività quotidiane svolte
+-   **dnrday**: giorno della decisione DNR\
+-   **prg2m**, **prg6m**: probabilità di sopravvivenza
+:::
 
 ## Categorical Features
-<div style="font-size: 60%;">
-- **death**: 0 = vivo, 1 = deceduto  
-- **sex**: maschio / femmina  
-- **hospdead**: morte in ospedale (0/1)  
-- **diabetes**, **dementia**: presenza/assenza 
-- **dzgroup**: gruppo diagnostico (es. Lung Cancer, Cirrhosis, ARF/MOSF)  
-- **dzclass**: classe diagnostica più ampia  
-- **income**: categoria di reddito  
-- **race**: white, black, other  
-- **ca**: categoria tumore (no / locale / metastatico)  
-- **dnr**: stato DNR (do-not-resuscitate)  
-- **sfdm2**: stato funzionale a 2 mesi  
-</div>
+
+::: {style="font-size: 60%;"}
+-   **death**: 0 = vivo, 1 = deceduto\
+-   **sex**: maschio / femmina\
+-   **hospdead**: morte in ospedale (0/1)\
+-   **diabetes**, **dementia**: presenza/assenza
+-   **dzgroup**: gruppo diagnostico (es. Lung Cancer, Cirrhosis, ARF/MOSF)\
+-   **dzclass**: classe diagnostica più ampia\
+-   **income**: categoria di reddito\
+-   **race**: white, black, other\
+-   **ca**: categoria tumore (no / locale / metastatico)\
+-   **dnr**: stato DNR (do-not-resuscitate)\
+-   **sfdm2**: stato funzionale a 2 mesi\
+:::
 
 # Esplorative Data Analysis
 
 ## Missing values
+
 ```{r}
 missing_summary <- tibble(
   variabile = names(data),
@@ -108,9 +109,11 @@ ggplot(missing_summary, aes(x = reorder(variabile, perc_na), y = perc_na)) +
   labs(title = "Variabili con valori mancanti",
        x = "Variabile", y = "% NA")
 ```
+
 ## Numerical Features
 
 ### Correlation matrix
+
 ```{r}
 num_data <- data[, sapply(data, is.numeric)]
 
@@ -126,8 +129,10 @@ levelplot(
 )
 ```
 
----
+------------------------------------------------------------------------
+
 ### Hierarchical Clustering
+
 ```{r}
 dist_mat <- as.dist(1 - corr_mat)
 
@@ -137,6 +142,7 @@ plot(hc, main = "Hierarchical Clustering")
 ```
 
 ## Categorical Features
+
 ```{r, warning=FALSE}
 data %>%
   select(where(is.factor)) %>%
@@ -157,14 +163,17 @@ data %>%
 # Preprocessing
 
 ## Manage Missing Values
-<div style="font-size: 60%;">
+
+::: {style="font-size: 60%;"}
 -Rimozione Variabili con molti valori mancanti: bun, urine, glucose, adlp
+
 ```{r}
 data <- data |> 
   select(-c(bun, urine, glucose, adlp))
 ```
 
 -Rimozione variabili molto correlate: totmcst, totcst, avtisst, dnrday
+
 ```{r}
 data <- data |> 
   select(-c(totmcst, totcst, avtisst, dnrday))
@@ -175,12 +184,14 @@ data <- data |>
 ```
 
 -Rimozione osservazioni per cui ci sono pochi NA nelle variabili: dnr, race, wblc, charges, crea
+
 ```{r}
 data <- data |>
   drop_na(dnr, race, wblc, charges, crea)
 ```
 
 -Imputazione valori mancanti: income
+
 ```{r}
 data <- data |>
   mutate(income = fct_explicit_na(income, na_level = "nd"))
@@ -195,11 +206,9 @@ tibble(
   filter(n_na > 0) |>         
   arrange(desc(perc_na))
 ```
-</div>
+:::
 
 # CONTINUA DA QUI
-
-
 
 ```{r,echo=FALSE,include=FALSE}
 data_scaled = data |> 
@@ -209,13 +218,16 @@ data_scaled = data |>
   ))
 ```
 
-
 # Unsupervised Learning
+
 ## Feature Selection
+
 ## Clustering
 
 # Supervised Learning
-## feature Selection
-## SVM
-## Interpretability
 
+## Feature Selection
+
+## SVM
+
+## Interpretability
