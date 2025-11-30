@@ -55,6 +55,7 @@ data = data |>
 # Esplorative Data Analysis
 
 ## Missing values
+
 Conteggio dei valori mancanti
 
 ```{r}
@@ -91,6 +92,7 @@ data |>
 adlp è una variabile compilata dal paziente: siccome presenta più del 60% di Na, si valuta l'esclusione
 
 ## Outlier detection
+
 Outlier detection usando IQR Rule
 
 ```{r}
@@ -112,7 +114,7 @@ data |>
 
 Visualizzo la distribuzione delle variabili con circa il 10% di outliers
 
-```{r}
+```
 vars <- c("hday", "crea", "bili", "charges",
           "dnrday", "slos", "totcst", "totmcst")
 
@@ -129,9 +131,11 @@ plots_hist <- map(
 
 for(p in plots_hist) print(p)
 ```
+
 ## Numerical Features
 
 ### Correlation matrix
+
 ```{r}
 num_data <- data[, sapply(data, is.numeric)]
 
@@ -146,7 +150,9 @@ levelplot(
   col.regions = colorRampPalette(c("#2A5783", "white", "#F07F28"))(100)
 )
 ```
+
 ### Density plot
+
 ```{r}
 num_data %>%
   pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
@@ -159,7 +165,7 @@ num_data %>%
 
 ```
 
-Variabili come prg6m, prg2m sembrano avere distribuzioni discrete o con pochi valori distinti: si potrebbero trattare come categoriche 
+Variabili come prg6m, prg2m sembrano avere distribuzioni discrete o con pochi valori distinti: si potrebbero trattare come categoriche
 
 charges, totcst, totmcst mostrano code lunghe: candidate per trasformazioni logaritmiche
 
@@ -174,7 +180,9 @@ hc <- hclust(dist_mat, method = "complete")
 
 plot(hc, main = "Hierarchical Clustering")
 ```
+
 ## Categorical Features
+
 ```{r, warning=FALSE}
 data %>%
   select(where(is.factor)) %>%
@@ -193,14 +201,18 @@ data %>%
 ```
 
 # Preprocessing 2
+
 ## Feature removing and Manage missing values
+
 Rimozione Variabili con molti valori mancanti
+
 ```{r}
 data <- data |> 
   select(-c(bun, urine, glucose, adlp))
 ```
 
 Rimozione variabili molto correlate
+
 ```{r}
 data <- data |> 
   select(-c(totmcst, totcst, avtisst, dnrday))
@@ -211,13 +223,18 @@ data <- data |>
 ```
 
 Rimozione osservazioni per cui ci sono pochi NA
+
 ```{r}
 data <- data |>
   drop_na(dnr, race, wblc, charges, crea)
 ```
 
 Imputazione valori mancanti delle restanti variabili
+
 ```{r}
+data <- data |>
+  mutate(income = fct_explicit_na(income, na_level = "nd"))
+
 tibble(
   variabile = names(data),
   n_na      = colSums(is.na(data)),
@@ -225,11 +242,17 @@ tibble(
 ) |>
   filter(n_na > 0) |>         
   arrange(desc(perc_na))
-
-data <- data |>
-  mutate(income = fct_explicit_na(income, na_level = "nd"))
 ```
-## Feature Scaling 
+
+## INCOMPLETO
+(FINIRE DI GESTIRE I NA NEI MODELLI SUCCESSIVI)
+
+
+
+
+
+## Feature Scaling
+
 ```{r}
 data_scaled = data |> 
   mutate(across(
@@ -238,12 +261,12 @@ data_scaled = data |>
   ))
 ```
 
+# Unsupervised Learning
 
-
-```{r}
+## 👎 PCA + Kmeans
+```{r, warning=FALSE, }
 vars_to_remove <- c( "alb",
-  "adls", "bili", "pafi", "ph", "prg2m", "edu", "prg6m"
-)
+  "adls", "bili", "pafi", "ph", "prg2m", "edu", "prg6m")
 
 num_data_scaled <- data_scaled |>
   select(where(is.numeric)) |> 
@@ -253,41 +276,103 @@ num_data_red = data |>
   select(where(is.numeric)) |> 
   select(!all_of(vars_to_remove))
 
+library(GGally)
 ggpairs(
   num_data_scaled,
-  lower = list(continuous = wrap("points", size = 0.8))
+  lower = list(
+    continuous = wrap("points", size = 0.8, alpha = 0.6, colour = "darkorange")
+  ),
+  progress = FALSE   # <-- disattiva i messaggi di avanzamento
 )
 ```
 
+PCA, Scelta del numero ragionevole di componenti
 
-# Unsupervised Learning
-
-Scelta del numero ragionevole di componenti
 ```{r}
 pca <- prcomp(num_data_scaled, scale. = FALSE)
 fviz_eig(pca, addlabels = TRUE, ylim = c(0, 25))
 ```
 
-
 scelta del numero ottimale di gruppi da identificare tramite silhouette
+
 ```{r}
 fviz_nbclust(pca$x[, 1:3], FUNcluster = kmeans, method = "silhouette")
 ```
-
-
-applicazione di CLUSPCA
+algoritmo kmeans sulle prime 6 PC
 ```{r}
-res_cluspca <- num_data_red |> 
-  cluspca(ndim = 3, nclus = 2, method = "RKM")
+set.seed(6)  
+km_res <- kmeans(pca$x[, 1:6], centers = 2, nstart = 25)
+
+# Data frame con i primi 3 PC e cluster
+pca_clusters <- as.data.frame(pca$x[, 1:3])
+colnames(pca_clusters) <- c("PC1", "PC2", "PC3")
+pca_clusters$cluster <- as.factor(km_res$cluster)
+
+# Plot 3D con Plotly
+library(plotly)
+
+p3d <- plot_ly(
+  data = pca_clusters,
+  x = ~PC1,
+  y = ~PC2,
+  z = ~PC3,
+  type = "scatter3d",
+  mode = "markers",
+  color = ~cluster,        # cluster come fattore
+  colors = "Set2",         # palette di colori
+  marker = list(size = 3)  # dimensione dei punti
+) %>%
+  layout(
+    title = "3D K-means clustering sui primi 3 PC",
+    scene = list(
+      xaxis = list(title = "PC1"),
+      yaxis = list(title = "PC2"),
+      zaxis = list(title = "PC3")
+    )
+  )
+
+p3d
+
+```
+
+
+## 👎 RKM (DA FARE tuning per ndim e nclus)
+
+```{r}
+res_cluspca <- num_data_scaled |> 
+  cluspca(ndim = 6, nclus = 2, method = "RKM")
 
 coords <- as.data.frame(res_cluspca$obscoord)
 coords$cluster <- as.factor(res_cluspca$cluster)
 
 ggpairs(coords, columns = 1:3, aes(color = cluster))
+
+sil <- silhouette(res_cluspca$cluster, dist(res_cluspca$obscoord))
+mean_sil <- mean(sil[, 3])
+cat('\nsilhouette: ', mean_sil)
+
 ```
 
+## 👎 FKM (DA FARE tuning per ndim e nclus)
 
+```{r}
+res_cluspca <- num_data_scaled |> 
+  cluspca(ndim = 6, nclus = 2, method = "FKM")
+
+coords <- as.data.frame(res_cluspca$obscoord)
+coords$cluster <- as.factor(res_cluspca$cluster)
+
+ggpairs(coords, columns = 1:3, aes(color = cluster))
+
+sil <- silhouette(res_cluspca$cluster, dist(res_cluspca$obscoord))
+mean_sil <- mean(sil[, 3])
+cat('\nsilhouette: ', mean_sil)
+```
+Sembra non ci siano variabili che 'causano rumore'
+
+## ? KMEANS (CON GMM feature selection)
 Variabili che agiscono con maggiore intensità sulla prima componente, la quale sembra discriminare due gruppi
+
 ```{r}
 load_pc1 <- data.frame(
   variable = rownames(pca$rotation),
@@ -298,30 +383,31 @@ load_pc1 |> arrange(desc(loading)) |> head(4)
 load_pc1 |> arrange(loading) |> head(4)
 ```
 
-
-
 Diagramma di dispersione tra: 1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno); 2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno); 3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
 
-
 ```{r}
-ggpairs(num_data_scaled |> select(hrt, meanbp, temp))
+ggpairs(
+  num_data_scaled |> select(hrt, meanbp, temp),
+  lower = list(
+    continuous = wrap("points", size = 0.8, alpha = 0.6, colour = "darkorange")
+  )
+)
 ```
 
-##RUNNA TU
-GMM feature selection 
 ```{r}
+## KMEANS (CON GMM feature selection)
 set.seed(123)  
 
 fs <- clustvarsel(
-  data_gmm,
+  num_data_scaled,
   G = 2,                 
   search = "headlong",    
   direction = "forward"  
 )
 ```
 
+Semplice K-means su queste 3 variabili più discriminanti
 
-Semplice K-medie su queste 3 variabili più discriminanti
 ```{r}
 data_scaled |> 
   select(meanbp, hrt, temp) |> 
@@ -370,16 +456,11 @@ data_scaled |>
   })()
 ```
 
-
 ```{r}
 GMM = Mclust(num_data_scaled, G = 4, modelNames = "EII")
 ```
 
-
-## Feature Selection
-## Clustering
-
-##PROVA Classica Tandem Analysis su tutte le variabili numeriche, le prime due dimensioni spiegano il 50 % della varianza totale. Silhouhette suggerisce 2 clusters mentre Gap statistics ne identifica solo 1. Valutare questa discordanza
+## Tandem Analysis su tutte le variabili numeriche, le prime due dimensioni spiegano il 50 % della varianza totale. Silhouhette suggerisce 2 clusters mentre Gap statistics ne identifica solo 1. Valutare questa discordanza
 
 ```{r}
 data_scaled |>
@@ -408,11 +489,106 @@ data_scaled |>
       ggtheme = theme_minimal()
     )
   })()
+```
+
+## MCA + Kmeans
+
+mca con 5 componenti
+```{r, warnings=FALSE}
+cat_data <- data |> select(where(is.factor))
+
+res_mca <- MCA(cat_data, ncp = 5, graph = TRUE)
+fviz_screeplot(res_mca, addlabels = TRUE)
+```
+
+Scelta del numero ottimale di cluster (silhouette)
+```{r}
+fviz_nbclust(res_mca$ind$coord, kmeans, method = "silhouette")
+```
+K-means sui primi 3 assi MCA
+```{r}
+set.seed(6)
+km_res <- kmeans(res_mca$ind$coord[, 1:3], centers = 4, nstart = 25)
+
+mca_clusters <- as.data.frame(res_mca$ind$coord[, 1:3])
+colnames(mca_clusters) <- c("Dim1", "Dim2", "Dim3")
+mca_clusters$cluster <- as.factor(km_res$cluster)
+
+p3d <- plot_ly(
+  data = mca_clusters,
+  x = ~Dim1,
+  y = ~Dim2,
+  z = ~Dim3,
+  type = "scatter3d",
+  mode = "markers",
+  color = ~cluster,
+  colors = "Set2",
+  marker = list(size = 3)
+) %>%
+  layout(
+    title = "3D K-means clustering su MCA",
+    scene = list(
+      xaxis = list(title = "Dim1"),
+      yaxis = list(title = "Dim2"),
+      zaxis = list(title = "Dim3")
+    )
+  )
+
+p3d
+
+sil <- silhouette(km_res$cluster, dist(res_mca$ind$coord[, 1:3]))
+mean_sil <- mean(sil[, 3])
+cat("\nsilhouette:", mean_sil)
 
 ```
 
 
+## Confronto numeriche/categoriche
+```{r}
+# --- 1. K-means numerico su 3 variabili ---
+set.seed(123)
+num_clusters <- data_scaled |>
+  select(meanbp, hrt, temp) |>
+  na.omit() |>
+  (\(d3) kmeans(d3, centers = 8, nstart = 50))()
+
+# --- 2. MCA + K-means su variabili categoriche ---
+cat_data <- data |> select(where(is.factor))
+res_mca <- MCA(cat_data, ncp = 5, graph = FALSE)
+
+set.seed(123)
+mca_clusters <- kmeans(res_mca$ind$coord[, 1:3], centers = 4, nstart = 50)
+
+# --- 3. Costruzione dataframe con entrambe le assegnazioni ---
+df_clusters <- data.frame(
+  id = 1:nrow(data),  # indice osservazioni
+  cluster_num = factor(num_clusters$cluster),
+  cluster_mca = factor(mca_clusters$cluster)
+)
+
+head(df_clusters)
+
+# --- 4. Matrice di confusione tra le due colonne ---
+conf_mat <- table(df_clusters$cluster_num, df_clusters$cluster_mca)
+conf_mat
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
 # Supervised Learning
+
 ## Feature Selection
+
 ## SVM
+
 ## Interpretability
