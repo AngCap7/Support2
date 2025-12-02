@@ -26,7 +26,9 @@ library(clustrd)
 library(mclust)
 library(cluster)
 library(VIM)
+library(rpart)
 ```
+
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
 support2 <- read_csv("support2.csv")
@@ -398,32 +400,18 @@ data_scaled |>
   select(meanbp, hrt, temp) |> 
   fviz_nbclust(kmeans, method = "silhouette")
 
-data_scaled |>
-  select(meanbp, hrt, temp) |>
-  (\(d3) {
-    km <- kmeans(d3, centers = 8, nstart = 200)
-   if (FALSE) {
-    p2d <- fviz_cluster(
-    km,
-    data = d3,
-    geom = "point",
-    ellipse = FALSE,
-    label = "none",
-    stand = FALSE,
-    axes = c(1,2),
-    xlab = "meanbp",
-    ylab = "hrt",
-    ggtheme = theme_minimal()
-    )
-  }
-  # ---- PLOT 3D (plotly) ----
-    p3d <- plotly::plot_ly(
-      x = d3$meanbp,
-      y = d3$hrt,
-      z = d3$temp,
+data_simple_kmeans = data_scaled |>
+  select(meanbp, hrt, temp)
+
+km_simple <- kmeans(data_simple_kmeans, centers = 8, nstart = 200)
+
+p3d <- plotly::plot_ly(
+      x = data_simple_kmeans$meanbp,
+      y = data_simple_kmeans$hrt,
+      z = data_simple_kmeans$temp,
       type = "scatter3d",
       mode = "markers",
-      color = factor(km$cluster),
+      color = factor(km_simple$cluster),
       colors = "Set1",
       marker = list(size = 3)
     ) |>
@@ -435,8 +423,8 @@ data_scaled |>
           zaxis = list(title = "temp")
         )
       )
-    p3d
-  })()
+
+p3d
 ```
 
 ## 👎✅GMM
@@ -649,7 +637,8 @@ chi_results |> arrange(p_value)
 tot_data_scaled = tot_data |> 
   mutate(across(
     where(is.numeric),
-    ~ as.numeric(scale(.x))))
+    ~ as.numeric(scale(.x)))) |> 
+  drop_na()
 
 head(tot_data_scaled)
 ```
@@ -663,7 +652,7 @@ head(tot_data_scaled)
 ```{r}
 set.seed(6)
 
-split <- initial_split(data_scaled, prop = 0.8, strata = death)
+split <- initial_split(tot_data_scaled, prop = 0.8, strata = death)
 train <- training(split)
 test  <- testing(split)
 
@@ -672,21 +661,17 @@ folds <- vfold_cv(train, v = 10, strata = death)
 
 
 ```{r}
-svm_rec <- recipe(death ~ ., data = train) |>
-  step_impute_median(all_numeric_predictors()) |>   # imputazione numeriche
-  step_impute_mode(all_nominal_predictors()) |>     # imputazione categoriche
-  step_nzv(all_predictors()) |>                     # rimozione variabili quasi costanti
-  step_dummy(all_nominal_predictors()) |>           # dummy encoding
-  step_normalize(all_numeric_predictors())
-  # se target sbilanciato: step_smote(death)
-
+svm_rec <- recipe(death ~ ., data = train) |>                     # 
+  step_dummy(all_nominal_predictors())           # dummy encodin                            
+# Specifica modello SVM con kernel RBF
 svm_spec <- svm_rbf(
   mode = "classification",
-  cost = tune(),        # parametro C
-  rbf_sigma = tune()    # parametro gamma
+  cost = tune(),            # penalty sugli errori
+  rbf_sigma = tune()        # parametro kernel RBF
 ) |> 
   set_engine("kernlab")
 
+# Workflow
 svm_wf <- workflow() |>
   add_model(svm_spec) |>
   add_recipe(svm_rec)
@@ -695,37 +680,46 @@ svm_wf <- workflow() |>
 
 tuning
 ```{r}
-svm_params <- parameters(svm_spec)
-svm_grid <- expand.grid(
-  cost = c(0.1, 1, 10, 100, 1000),
-  rbf_sigma = c(0.001, 0.01, 0.1, 1, 10)
+set.seed(123)
+
+svm_grid <- tibble(
+  cost = c(0.1, 1, 10, 100),
+  rbf_sigma = c(0.001, 0.01, 0.1, 1)
 )
 
-# Tuning con cross-validation 
-svm_tuned <- tune_grid(
+# Step 1: tuning a griglia
+svm_grid_res <- tune_grid(
   svm_wf,
   resamples = folds,
   grid = svm_grid,
-  metrics = metric_set(accuracy, roc_auc, precision, recall, f_meas),
-  control = control_grid(save_pred = TRUE)
+  metrics = metric_set(roc_auc)
 )
 
-collect_metrics(svm_tuned) |> arrange(desc(mean))
+# Step 2: tuning bayesiano partendo dai risultati della griglia
+svm_bayes <- tune_bayes(
+  svm_wf,
+  resamples = folds,
+  metrics = metric_set(roc_auc),
+  initial = svm_grid_res,             
+  iter = 3,
+  control = control_bayes(verbose = TRUE)
+)
+
+# Migliori parametri
+best_params <- select_best(svm_bayes, metric = "roc_auc")
+final_svm <- finalize_workflow(svm_wf, best_params)
 ```
+
 
 best model
 ```{r}
-best_params <- select_best(svm_tuned, metric = "roc_auc")
-svm_final_wf <- finalize_workflow(svm_wf, best_params)
-
-svm_final_fit <- last_fit(svm_final_wf, split)
+svm_final_fit <- last_fit(final_svm, split)
 
 collect_metrics(svm_final_fit)
 
 svm_final_fit |> 
   collect_predictions() |> 
   conf_mat(truth = death, estimate = .pred_class)
-
 ```
 
 ## Interpretability
@@ -741,6 +735,73 @@ svm_final_fit |>
 # Idee IODICE
 # Supervised Learning
 Dopo il clustering fare Decision Tree o RF con feature Importance, Fatto con variabile target: cluster
+
+
+# Metodo supervisionato cluster ~ dimensioni fattoriali MCA (prime 3)
+
+variabili più influenti di ogni dimensione fattoriale MCA
+```{r}
+# Descrizione delle dimensioni MCA
+dim_desc <- dimdesc(res_mca, axes = 1:3)
+
+# Variabili più influenti per Dim1
+dim_desc[[1]]$quali
+
+# Variabili più influenti per Dim2
+dim_desc[[2]]$quali
+
+# Variabili più influenti per Dim3
+dim_desc[[3]]$quali
+```
+
+
+Analisi supervisionata sui clusters prodotto da MCA + kmeans. Ne risulta che gli assi fattoriali maggiormente discriminante sono il terzo, influito maggiormente dalla patologia del paziente, e il primo asse, dove gioca un ruolo importante anche lo status del paziente
+```{r}
+mca_dataframe <- data.frame(
+  cluster = mca_clusters$cluster,
+  Dim1    = res_mca$ind$coord[, 1],
+  Dim2    = res_mca$ind$coord[, 2],
+  Dim3    = res_mca$ind$coord[, 3]
+)
+
+tree_model <- rpart(
+  cluster ~ Dim1 + Dim2 + Dim3,
+  data = mca_dataframe,
+  method = "class",
+  control = rpart.control(
+    minsplit = 20,   
+    cp = 0.01,       
+    maxdepth = 4     
+  )
+)
+
+library(rattle)
+
+fancyRpartPlot(tree_model)
+```
+
+# Metodo supervisionato cluster ~ meanbp, hrt, temp (prime 3 variabili discriminanti)
+
+```{r}
+data_simple_kmeans$cluster = km_simple$cluster
+
+
+tree_model_2 <- rpart(
+  cluster ~ .,
+  data = data_simple_kmeans,
+  method = "class",
+  control = rpart.control(
+    minsplit = 20,   
+    cp = 0.01,       
+    maxdepth = 4     
+  )
+)
+
+fancyRpartPlot(tree_model_2)
+```
+
+
+
 
 # Unsupervised Learning
 Dopo la classificazione, Fare clustering sui valori di Shapley
