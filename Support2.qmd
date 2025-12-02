@@ -25,6 +25,7 @@ library(plotly)
 library(clustrd)
 library(mclust)
 library(cluster)
+library(VIM)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -238,31 +239,47 @@ tibble(
   arrange(desc(perc_na))
 ```
 
-Imputazione valori mancanti delle restanti variabili
+Imputazione valori mancanti delle restanti variabili (missForest): 
+
+1) Inizializza i valori mancanti con stime semplici.
+2) Iterativamente, per ogni variabile con NA, costruisce una foresta usando le altre variabili come predittori e riempie i valori mancanti.
+3) Ripete finché converge o raggiunge il limite di iterazioni.
+Funziona bene con variabili miste (numeriche e categoriche) e non richiede assunzioni parametriche.
 
 ```{r}
 data <- data |>
   mutate(income = fct_explicit_na(income, na_level = "nd"))
 
+set.seed(123)
+data_imp <- kNN(data, variable = c("wblc","charges","crea","race","dnr"), k = 5)
+
+
 ############## fare modello supervised per predire i NA oppure rimuovere osservazioni
 ```
+
+
+```{r}
+data_imp = data_imp |> 
+  select(-c(wblc_imp, charges_imp, crea_imp, race_imp, dnr_imp))
+```
+
 
 ## Feature Scaling
 
 ```{r}
-data_scaled = data |> 
+data_scaled = data_imp |> 
   mutate(across(
     where(is.numeric),
     ~ as.numeric(scale(.x))
   ))
+
+data_scaled <- data_scaled |> na.omit() 
 ```
 
 # Unsupervised Learning
 
 ## 👎 PCA + Kmeans
 ```{r, warning=FALSE, }
-data_scaled <- data_scaled |> na.omit() # DA TOGLIERE
-
 num_data_scaled <- data_scaled |>
   select(where(is.numeric))
 
@@ -379,12 +396,10 @@ Semplice K-means su queste 3 variabili più discriminanti
 ```{r}
 data_scaled |> 
   select(meanbp, hrt, temp) |> 
-  na.omit() |> 
   fviz_nbclust(kmeans, method = "silhouette")
 
 data_scaled |>
   select(meanbp, hrt, temp) |>
-  na.omit() |>
   (\(d3) {
     km <- kmeans(d3, centers = 8, nstart = 200)
    if (FALSE) {
@@ -433,7 +448,6 @@ GMM = Mclust(num_data_scaled, G = 4, modelNames = "EII")
 data_scaled |>
   # 1. Selezione variabili numeriche e rimozione NA
   select(where(is.numeric)) |>
-  na.omit() |>
   (\(df_num) {
     pca_res <- PCA(df_num, ncp = 4, graph = FALSE)
     pcs <- as.data.frame(pca_res$ind$coord[, 1:2])
@@ -461,7 +475,7 @@ data_scaled |>
 
 mca con 5 componenti
 ```{r, warnings=FALSE}
-cat_data <- data |> select(where(is.factor))
+cat_data <- data_scaled |> select(where(is.factor))
 
 res_mca <- MCA(cat_data, ncp = 5, graph = TRUE)
 fviz_screeplot(res_mca, addlabels = TRUE)
@@ -526,11 +540,10 @@ xyplot(
 set.seed(6)
 num_clusters <- data_scaled |>
   select(meanbp, hrt, temp) |>
-  na.omit() |>
   (\(d3) kmeans(d3, centers = 8, nstart = 50))()
 
 # MCA + K-means sulle variabili categoriche 
-cat_data <- data |> select(where(is.factor))
+cat_data <- data_scaled |> select(where(is.factor))
 res_mca <- MCA(cat_data, ncp = 5, graph = FALSE)
 
 set.seed(6)
@@ -538,7 +551,7 @@ mca_clusters <- kmeans(res_mca$ind$coord[, 1:3], centers = 4, nstart = 50)
 
 # Costruzione dataframe con entrambe le assegnazioni 
 df_clusters <- data.frame(
-  id = 1:nrow(data),  # indice osservazioni
+  id = 1:nrow(data_scaled),  # indice osservazioni
   cluster_num = factor(num_clusters$cluster),
   cluster_mca = factor(mca_clusters$cluster)
 )
@@ -564,6 +577,7 @@ conf_mat
 
 # Supervised Learning
 ```{r}
+tot_data = data_imp
 head(tot_data)
 ```
 
