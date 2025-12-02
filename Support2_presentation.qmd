@@ -1,14 +1,17 @@
 ---
 title: "EXAM"
-author: "Mariateresa Russo e angelo Capasso"
+author: "Mariateresa Russo e Angelo Capasso"
 format:
   revealjs:
     theme: solarized
-    transition: convex
+    highlight: pygments
+    center: true
+    transition: fade
+    background-transition: slide
     slide-number: true
+    preview-links: true
     code-fold: true
-    code-overflow: wrap
-editor: visual
+    code-summary: "code"
 ---
 
 ```{r setup, include = FALSE, echo = FALSE}
@@ -95,6 +98,9 @@ data = data |>
 ## Missing values
 
 ```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 missing_summary <- tibble(
   variabile = names(data),
   n_na      = colSums(is.na(data)),
@@ -115,6 +121,9 @@ ggplot(missing_summary, aes(x = reorder(variabile, perc_na), y = perc_na)) +
 ### Correlation matrix
 
 ```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 num_data <- data[, sapply(data, is.numeric)]
 
 corr_mat <- cor(num_data, use = "pairwise.complete.obs")
@@ -134,6 +143,9 @@ levelplot(
 ### Hierarchical Clustering
 
 ```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 dist_mat <- as.dist(1 - corr_mat)
 
 hc <- hclust(dist_mat, method = "complete")
@@ -144,6 +156,9 @@ plot(hc, main = "Hierarchical Clustering")
 ## Categorical Features
 
 ```{r, warning=FALSE}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 data %>%
   select(where(is.factor)) %>%
   pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
@@ -168,15 +183,16 @@ data %>%
 -Rimozione Variabili con molti valori mancanti: bun, urine, glucose, adlp
 
 ```{r}
-data <- data |> 
-  select(-c(bun, urine, glucose, adlp))
+data <- data |> select(-c(
+  adlp, urine, glucose, bun, totmcst, alb, adls, bili, pafi, ph,
+  prg2m, edu, prg6m, totcst))
 ```
 
 -Rimozione variabili molto correlate: totmcst, totcst, avtisst, dnrday
 
 ```{r}
 data <- data |> 
-  select(-c(totmcst, totcst, avtisst, dnrday))
+  select(-c(avtisst, dnrday))
 # adls adlp
 # totmcst totcst charges
 # aps avtisst
@@ -190,11 +206,20 @@ data <- data |>
   drop_na(dnr, race, wblc, charges, crea)
 ```
 
--Imputazione valori mancanti: income
+-Imputazione per alcune variabili con valori mancanti
 
 ```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 data <- data |>
   mutate(income = fct_explicit_na(income, na_level = "nd"))
+
+library(VIM)
+set.seed(6)
+data_imp <- kNN(data, variable = c("wblc","charges","crea","race","dnr"), k = 5)
+data_imp = data_imp |> 
+  select(-c(wblc_imp, charges_imp, crea_imp, race_imp, dnr_imp))
 ```
 
 ```{r, echo=FALSE}
@@ -218,16 +243,3 @@ data_scaled = data |>
   ))
 ```
 
-# Unsupervised Learning
-
-## Feature Selection
-
-## Clustering
-
-# Supervised Learning
-
-## Feature Selection
-
-## SVM
-
-## Interpretability
