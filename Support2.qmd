@@ -6,6 +6,7 @@ editor: visual
 ---
 
 # DUBBI
+
 -PCA e MCA hanno dimensioni che racchiudono poca varianza/inertia spiegata
 
 ```{r setup, include = FALSE, echo = FALSE}
@@ -124,23 +125,35 @@ data |>
 
 Visualizzo la distribuzione delle variabili con circa il 10% di outliers
 
-```         
+```{r}
 vars <- c("hday", "crea", "bili", "charges",
           "dnrday", "slos", "totcst", "totmcst")
 
-plots_hist <- map(
-  vars,
-  ~ lattice::histogram(
-      as.formula(paste("~", .x)),
-      data = data,
-      main = paste(.x),
-      col = "#4BBAC3",
-      border = "grey30"
-    )
-)
+data_num <- data[, vars]
 
-for(p in plots_hist) print(p)
+box_plots <- list()
+density_plots <- list()
+for(v in vars){
+  box_plots[[v]] <- bwplot(~ get(v), data = data,
+                                    main = paste("Density plot of", v),
+                                    xlab = v,
+                                    col = "steelblue",
+                                    plot.points = FALSE)
+}
+for(p in box_plots) print(p)
+
+
+box_plots <- list()
+for(v in vars){
+  density_plots[[v]] <- densityplot(~ get(v), data = data,
+                                    main = paste("Density plot of", v),
+                                    xlab = v,
+                                    col = "steelblue",
+                                    plot.points = FALSE)
+}
+for(p in density_plots) print(p)
 ```
+
 
 ## Numerical Features
 
@@ -281,7 +294,7 @@ data_scaled <- data_scaled |> na.omit()
 
 # Unsupervised Learning
 
-## 👎 PCA + Kmeans
+## 👎 PCA + Kmeans (tutte le variabili numeriche)
 
 ```{r, warning=FALSE, }
 num_data_scaled <- data_scaled |>
@@ -350,16 +363,17 @@ p3d
 
 ```
 
-## 👎 RKM 
+## 👎RKM (3 variabili)
 
 ```{r}
-res_cluspca <- num_data_scaled |> 
-  cluspca(ndim = 3, nclus = 2, method = "RKM")
+res_cluspca <- num_data_scaled |>
+  select(meanbp, hrt, temp) %>% 
+  cluspca(ndim = 2, nclus = 4, method = "RKM")
 
 coords <- as.data.frame(res_cluspca$obscoord)
 coords$cluster <- as.factor(res_cluspca$cluster)
 
-ggpairs(coords, columns = 1:3, aes(color = cluster))
+ggpairs(coords, columns = 1:2, aes(color = cluster))
 
 sil <- silhouette(res_cluspca$cluster, dist(res_cluspca$obscoord))
 mean_sil <- mean(sil[, 3])
@@ -367,11 +381,12 @@ cat('\nsilhouette: ', mean_sil)
 
 ```
 
-## 👎 FKM (DA FARE tuning per ndim e nclus)
+## 👎 FKM (3 variabili)
 
 ```{r}
 res_cluspca <- num_data_scaled |> 
-  cluspca(ndim = 3, nclus = 2, method = "FKM")
+  select(meanbp, hrt, temp) %>% 
+  cluspca(ndim = 2, nclus = 4, method = "FKM")
 
 coords <- as.data.frame(res_cluspca$obscoord)
 coords$cluster <- as.factor(res_cluspca$cluster)
@@ -385,7 +400,7 @@ cat('\nsilhouette: ', mean_sil)
 
 Sembra non ci siano variabili che 'causano rumore'
 
-## ✅Kmeans
+## ✅Kmeans (3 variabili)
 
 Variabili che agiscono con maggiore intensità sulla prima componente, la quale sembra discriminare due gruppi Diagramma di dispersione tra: 1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno); 2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno); 3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
 
@@ -432,7 +447,7 @@ p3d <- plotly::plot_ly(
 p3d
 ```
 
-## 👎✅GMM
+## 👎✅GMM  (3 variabili)
 
 ```{r}
 GMM = Mclust(num_data_scaled, G = 4, modelNames = "EII")
@@ -445,12 +460,9 @@ data_scaled |>
   (\(df_num) {
     pca_res <- PCA(df_num, ncp = 4, graph = FALSE)
     pcs <- as.data.frame(pca_res$ind$coord[, 1:2])
-    
-    p1 <- fviz_nbclust(pcs, kmeans, method = "wss") + ggtitle("Elbow")
+
     p2 <- fviz_nbclust(pcs, kmeans, method = "silhouette") + ggtitle("Silhouette")
-    p3 <- fviz_nbclust(pcs, kmeans, method = "gap_stat") + ggtitle("Gap Statistic")
-    
-    print(p1); print(p2); print(p3)
+    print(p2)
     
     km <- kmeans(pcs, centers = 2, nstart = 100)
     
@@ -465,14 +477,13 @@ data_scaled |>
   })()
 ```
 
-## ✅MCA + Kmeans
-
-mca con 5 componenti
+## ✅MCA + Kmeans  (tutte le variabili categoriche)
+mca con 4 componenti
 
 ```{r, warnings=FALSE}
 cat_data <- data_scaled |> select(where(is.factor))
 
-res_mca <- MCA(cat_data, ncp = 5, graph = TRUE)
+res_mca <- MCA(cat_data, ncp = 4, graph = TRUE)
 fviz_screeplot(res_mca, addlabels = TRUE)
 ```
 
@@ -531,39 +542,142 @@ xyplot(
 
 ```
 
-## ------ Compare clusterings (numerical and categorical)
-
+## ----- MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
+categorizzare le 3 numeriche e fare MCA globale (bspline), le categorie si scelgono in base al numero di nodi della spline
 ```{r}
-# K-means numerico sulle 3 variabili 
-set.seed(6)
-num_clusters <- data_scaled |>
-  select(meanbp, hrt, temp) |>
-  (\(d3) kmeans(d3, centers = 8, nstart = 50))()
-
-# MCA + K-means sulle variabili categoriche 
-cat_data <- data_scaled |> select(where(is.factor))
-res_mca <- MCA(cat_data, ncp = 5, graph = FALSE)
-
-set.seed(6)
-mca_clusters <- kmeans(res_mca$ind$coord[, 1:3], centers = 4, nstart = 50)
-
-# Costruzione dataframe con entrambe le assegnazioni 
-df_clusters <- data.frame(
-  id = 1:nrow(data_scaled),  # indice osservazioni
-  cluster_num = factor(num_clusters$cluster),
-  cluster_mca = factor(mca_clusters$cluster)
-)
-
-head(df_clusters)
-
-# Matrice di confusione tra le due colonne 
-conf_mat <- table(df_clusters$cluster_num, df_clusters$cluster_mca)
-conf_mat
 
 ```
 
-## ------- MCA+numeriche +Kmeans
 
+# ------Evaluate Results
+
+## ------Surrogate Model
+modello supervisionato, mettere variabili che non hanno partecipato al cluster
+```{r}
+
+```
+
+
+## -----NA Evaluation
+valutare variabili con missing dopo il clustering
+```{r}
+
+```
+
+## -----Cluster Evaluation
+fare DA con Mclust per vedere se i risultati sono 'correlati' a charges, rimuovere charges dal modello
+```{r}
+
+```
+
+# EXTRA 1
+## cluster --\> MCA+kmeans
+
+variabili più influenti di ogni dimensione fattoriale MCA
+
+```{r}
+# Descrizione delle dimensioni MCA
+dim_desc <- dimdesc(res_mca, axes = 1:3)
+
+# Variabili più influenti per Dim1
+dim_desc[[1]]$quali
+
+# Variabili più influenti per Dim2
+dim_desc[[2]]$quali
+
+# Variabili più influenti per Dim3
+dim_desc[[3]]$quali
+```
+
+Analisi supervisionata sui clusters prodotto da MCA + kmeans. Ne risulta che gli assi fattoriali maggiormente discriminante sono il terzo, influito maggiormente dalla patologia del paziente, e il primo asse, dove gioca un ruolo importante anche lo status del paziente
+
+```{r}
+mca_dataframe <- data.frame(
+  cluster = mca_clusters$cluster,
+  meanbp = num_data_scaled$meanbp,
+  hrt = num_data_scaled$hrt,
+  temp = num_data_scaled$temp
+)
+
+tree_model <- rpart(
+  cluster ~ .,
+  data = mca_dataframe,
+  method = "class",
+  control = rpart.control(
+    minsplit = 20,   
+    cp = 0.01,       
+    maxdepth = 4     
+  )
+)
+
+library(rattle)
+
+fancyRpartPlot(tree_model)
+```
+
+## cluster --\> Kmeans su meanbp, hrt, temp (prime 3 variabili discriminanti)
+
+```{r}
+data_simple_kmeans$cluster = km_simple$cluster
+
+
+tree_model_2 <- rpart(
+  cluster ~ .,
+  data = data_simple_kmeans,
+  method = "class",
+  control = rpart.control(
+    minsplit = 20,   
+    cp = 0.01,       
+    maxdepth = 4     
+  )
+)
+
+fancyRpartPlot(tree_model_2)
+```
+
+# --------------APPROFONDIRE
+-correzione Benzecri per MCA per l'inertia spiegata
+
+```{r}
+# SOLO PER STUDIARE
+# Source - https://stackoverflow.com/a
+# Posted by VincentP
+# Retrieved 2025-12-03, License - CC BY-SA 4.0
+
+mca <- MCA(mydata)
+#Benzecri correction
+p <- nrow(mca$eig)+1
+lambda <- mca$eig[,1]
+lambdaC <- lambda
+lambdaT <- which(lambda>=1/p)
+
+#eig.val corrected
+lambdaC=(p/(p-1))*(lambdaC[lambdaT]-(1/p))^2
+
+#percentage of variances explained per axes
+ptd <- (lambdaC/sum(lambdaC))
+
+#cumulated percentage of explained variance
+cum <- cumsum(lambdaC/sum(lambdaC))
+correc <- cbind(lambdaC,ptd,cum*100)
+correc = as.data.frame(correc)
+correc
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# ------------------------------
+# IODICE
 # Supervised Learning
 
 ```{r}
@@ -684,10 +798,10 @@ svm_wf <- workflow() |>
   add_recipe(svm_rec)
 ```
 
-tuning
-Grid Search prova tutte le combinazioni possibili di iperparametri in una griglia predefinita, mentre Bayesian Optimization non prova tutte le combinazioni: costruisce un modello probabilistico dello spazio dei parametri
+tuning Grid Search prova tutte le combinazioni possibili di iperparametri in una griglia predefinita, mentre Bayesian Optimization non prova tutte le combinazioni: costruisce un modello probabilistico dello spazio dei parametri
+
 ```{r}
-set.seed(123)
+set.seed(6)
 
 svm_grid <- tibble(
   cost = c(0.1, 1, 10, 100),
@@ -730,11 +844,13 @@ svm_final_fit |>
 ```
 
 ## -------Interpretability
+
 ```{r}
 library(iml)
 
 dplyr::glimpse(train)
 ```
+
 ```{r}
 svm_fit_model <- svm_fit %>% extract_fit_parsnip() %>% pluck("fit")
 
@@ -755,6 +871,7 @@ svm_pred <- Predictor$new(
 ```
 
 ## PDP/ALE
+
 ```{r}
 # PDP su una variabile (es. "age")
 pdp_age <- FeatureEffect$new(
@@ -773,86 +890,10 @@ pdp_age$plot() + theme_minimal()
 
 ## SHAP
 
+# ----------------------------------
 
-
-
-
-
-
-
-
-
-
-# EXTRA 1
-
-# Supervised Learning
-
-Dopo il clustering fare Decision Tree, con variabile target i cluster
-
-## cluster -->  MCA+kmeans 
-
-variabili più influenti di ogni dimensione fattoriale MCA
-```{r}
-# Descrizione delle dimensioni MCA
-dim_desc <- dimdesc(res_mca, axes = 1:3)
-
-# Variabili più influenti per Dim1
-dim_desc[[1]]$quali
-
-# Variabili più influenti per Dim2
-dim_desc[[2]]$quali
-
-# Variabili più influenti per Dim3
-dim_desc[[3]]$quali
-```
-
-Analisi supervisionata sui clusters prodotto da MCA + kmeans. Ne risulta che gli assi fattoriali maggiormente discriminante sono il terzo, influito maggiormente dalla patologia del paziente, e il primo asse, dove gioca un ruolo importante anche lo status del paziente
-
-```{r}
-mca_dataframe <- data.frame(
-  cluster = mca_clusters$cluster,
-  Dim1    = res_mca$ind$coord[, 1],
-  Dim2    = res_mca$ind$coord[, 2],
-  Dim3    = res_mca$ind$coord[, 3]
-)
-
-tree_model <- rpart(
-  cluster ~ Dim1 + Dim2 + Dim3,
-  data = mca_dataframe,
-  method = "class",
-  control = rpart.control(
-    minsplit = 20,   
-    cp = 0.01,       
-    maxdepth = 4     
-  )
-)
-
-library(rattle)
-
-fancyRpartPlot(tree_model)
-```
-
-## cluster --> Kmeans su meanbp, hrt, temp (prime 3 variabili discriminanti)
-
-```{r}
-data_simple_kmeans$cluster = km_simple$cluster
-
-
-tree_model_2 <- rpart(
-  cluster ~ .,
-  data = data_simple_kmeans,
-  method = "class",
-  control = rpart.control(
-    minsplit = 20,   
-    cp = 0.01,       
-    maxdepth = 4     
-  )
-)
-
-fancyRpartPlot(tree_model_2)
-```
-
-# EXTRA 2 
+# EXTRA 2
 
 # Unsupervised Learning
+
 Dopo la classificazione supervisionata, Fare clustering sui valori di Shapley
