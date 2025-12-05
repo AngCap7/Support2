@@ -743,7 +743,16 @@ p2
 
 
 ```{r}
+skim_all <- data_joined %>%
+  skimr::skim()
 
+# Solo cluster 3
+skim_cluster3 <- data_joined %>%
+  filter(cluster == 3) %>%
+  skimr::skim()
+
+skim_all
+skim_cluster3
 ```
 
 
