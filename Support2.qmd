@@ -33,6 +33,7 @@ library(kknn)
 library(dplyr)
 library(tidyr)
 library(purrr)
+library(rattle)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -47,6 +48,8 @@ Ricodifica corretta per i nomi delle colonne
 
 ```{r, include=FALSE}
 colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
+
+support2_na_analysis = data
 
 data |> 
   glimpse()
@@ -260,6 +263,7 @@ tibble(
   arrange(desc(perc_na))
 ```
 
+
 Imputazione valori mancanti delle restanti variabili (missForest):
 
 1)  Inizializza i valori mancanti con stime semplici.
@@ -268,7 +272,8 @@ Imputazione valori mancanti delle restanti variabili (missForest):
 
 ```{r}
 data <- data |>
-  mutate(income = fct_explicit_na(income, na_level = "nd"))
+  mutate(income = fct_explicit_na(income, na_level = "nd"),
+        id = seq(1:nrow(data)))
 
 set.seed(6)
 data_imp <- kNN(data, variable = c("wblc","charges","crea","race","dnr"), k = 5)
@@ -284,12 +289,15 @@ data_imp = data_imp |>
 
 ```{r}
 data_scaled = data_imp |> 
+  select(-id) |> 
   mutate(across(
     where(is.numeric),
     ~ as.numeric(scale(.x))
-  ))
+  )) |> 
+  mutate(id = data$id)
 
-data_scaled <- data_scaled |> na.omit() 
+data_scaled <- data_scaled |> 
+  na.omit() 
 ```
 
 # Unsupervised Learning
@@ -298,10 +306,11 @@ data_scaled <- data_scaled |> na.omit()
 
 ```{r, warning=FALSE, }
 num_data_scaled <- data_scaled |>
-  select(where(is.numeric))
+  select(where(is.numeric)) |> 
+  select(-id)
 
 num_data_red = data |> 
-  select(where(is.numeric)) 
+  select(where(is.numeric))
 
 ggpairs(
   num_data_scaled,
@@ -457,6 +466,7 @@ GMM = Mclust(num_data_scaled, G = 4, modelNames = "EII")
 data_scaled |>
   # 1. Selezione variabili numeriche e rimozione NA
   select(where(is.numeric)) |>
+  select(-id) |> 
   (\(df_num) {
     pca_res <- PCA(df_num, ncp = 4, graph = FALSE)
     pcs <- as.data.frame(pca_res$ind$coord[, 1:2])
@@ -545,8 +555,94 @@ xyplot(
 ## ----- MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
 categorizzare le 3 numeriche e fare MCA globale (bspline), le categorie si scelgono in base al numero di nodi della spline
 ```{r}
+num_vars <- data_scaled |> select(meanbp, hrt, temp)
 
+# Calcolo min, mediana e max per ciascuna variabile
+stats <- num_vars |> summarise(across(everything(), list(min=min, med=median, max=max)))
+
+# Fuzzy encoding semplice
+fuzzy_encoded <- num_vars |> mutate(
+  meanbp_low  = pmax(0, (stats$meanbp_med - meanbp)/(stats$meanbp_med - stats$meanbp_min)),
+  meanbp_mid  = pmax(0, 1 - abs(meanbp - stats$meanbp_med)/(stats$meanbp_max - stats$meanbp_min)),
+  meanbp_high = pmax(0, (meanbp - stats$meanbp_med)/(stats$meanbp_max - stats$meanbp_med)),
+  
+  hrt_low  = pmax(0, (stats$hrt_med - hrt)/(stats$hrt_med - stats$hrt_min)),
+  hrt_mid  = pmax(0, 1 - abs(hrt - stats$hrt_med)/(stats$hrt_max - stats$hrt_min)),
+  hrt_high = pmax(0, (hrt - stats$hrt_med)/(stats$hrt_max - stats$hrt_med)),
+  
+  temp_low  = pmax(0, (stats$temp_med - temp)/(stats$temp_med - stats$temp_min)),
+  temp_mid  = pmax(0, 1 - abs(temp - stats$temp_med)/(stats$temp_max - stats$temp_min)),
+  temp_high = pmax(0, (temp - stats$temp_med)/(stats$temp_max - stats$temp_med))
+) |> 
+  select(-c(meanbp, temp, hrt))
+
+
+#categorizzazione sfruttando la fuzzy
+meanbp_cat <- apply(fuzzy_encoded[, c("meanbp_low","meanbp_mid","meanbp_high")], 1, 
+                    function(x) c("low","mid","high")[which.max(x)])
+hrt_cat <- apply(fuzzy_encoded[, c("hrt_low","hrt_mid","hrt_high")], 1, 
+                 function(x) c("low","mid","high")[which.max(x)])
+temp_cat <- apply(fuzzy_encoded[, c("temp_low","temp_mid","temp_high")], 1, 
+                  function(x) c("low","mid","high")[which.max(x)])
+# Trasforma in fattori
+meanbp_cat = factor(meanbp_cat)
+hrt_cat = factor(hrt_cat)
+temp_cat = factor(temp_cat)
+
+# Integro con le categoriche
+categorical_vars <- data_scaled |> select_if(is.factor)
+  
+categorica_fuzzy = categorical_vars |> 
+  cbind(fuzzy_encoded)
+
+
+categorical_vars_ext <- categorical_vars |> 
+  mutate(meanbp_cat = meanbp_cat,
+         hrt_cat    = hrt_cat,
+         temp_cat   = temp_cat) |> 
+  select(-income)
+# Ricodifica dummy (0/1) di tutte le categoriche
 ```
+
+
+# 7) Factor Analsys mixture data sulla matrice delle categoriche + fuzzy (equivalente MCA sulle categorie)
+```{r}
+res.famd_vars <- FAMD(categorica_fuzzy, graph = FALSE)
+
+#CA sulla Burt versione 2 (meanbp, temp, hrt categoriche) (equivalente MCA sulle categorie)
+res.mca_vars_2 = MCA(categorical_vars_ext, graph = FALSE)
+```
+
+
+
+```{r}
+fviz_mca_var(res.mca_vars_2, repel = TRUE, )   # categorie (colonne della Burt)
+```
+
+
+```{r}
+plot.FAMD(res.famd_vars)
+```
+
+
+Kmeans sulla prima e terza dimensione della MCA sulla matrice di Burt 2.0 (meanbp, hrt e temp categoriche semplici)
+```{r}
+coords_mca_2 <- res.mca_vars_2$ind$coord[,c(1,3)]
+
+# 2. Calcolo silhouette per diversi k
+fviz_nbclust(coords_mca_2, kmeans, method = "silhouette")
+
+# 4. Supponiamo che il grafico suggerisca k = 3
+set.seed(123)
+res.mca_kmeans_2 <- kmeans(coords_mca_2, centers = 4, nstart = 25)
+
+# 5. Visualizzo i cluster sulla mappa MCA
+fviz_cluster(res.mca_kmeans_2, data = coords_mca_2,
+             geom = "point",
+             labelsize = 4,
+             main = "K-means + MCA")
+```
+
 
 
 # ------Evaluate Results
@@ -554,15 +650,103 @@ categorizzare le 3 numeriche e fare MCA globale (bspline), le categorie si scelg
 ## ------Surrogate Model
 modello supervisionato, mettere variabili che non hanno partecipato al cluster
 ```{r}
+sur_mod_dataframe <- data.frame(
+  cluster = res.mca_kmeans_2$cluster,
+  income = categorical_vars$income,
+  slos = data_scaled$slos,
+  sod = data_scaled$sod,
+  n_comorbidity = data_scaled$num.co,
+  charges = data_scaled$charges, 
+  wblc = data_scaled$wblc,
+  age = data_scaled$age,
+  d.time = data_scaled$d.time,
+  resp = data_scaled$resp,
+  crea = data_scaled$crea
+)
 
+surrogate_model <- rpart(
+  cluster ~ n_comorbidity + charges,
+  data = sur_mod_dataframe,
+  method = "class",
+  control = rpart.control(
+    minsplit = 250,   
+    cp = 0.06,       
+    maxdepth = 5   
+  )
+)
+
+fancyRpartPlot(surrogate_model)
 ```
 
 
 ## -----NA Evaluation
 valutare variabili con missing dopo il clustering
 ```{r}
+categorical_vars_with_id = categorical_vars_ext |> 
+  mutate(id = data_scaled$id)
+
+data_joined <- support2_na_analysis %>%
+  mutate(id = data$id) |> 
+  dplyr::semi_join(categorical_vars_with_id, by = "id") |> 
+  mutate(cluster = res.mca_kmeans_2$cluster)
+```
+
+
+```{r}
+vars_with_missing10 <- data_joined %>%
+  summarise(across(everything(), ~ mean(is.na(.))*100)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "pct_missing") %>%
+  filter(pct_missing >= 10) %>%
+  pull(variable)
+
+# 2. Dataset filtrato con cluster + variabili selezionate
+data_missing10 <- data_joined %>%
+  select(cluster, all_of(vars_with_missing10))
+
+# 3. Analisi dei mancanti per cluster (percentuali)
+missing_by_cluster <- data_missing10 %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), ~ sum(is.na(.)), .names = "na_{col}")) %>%
+  pivot_longer(-cluster, names_to = "variable", values_to = "na_count")
+
+
+# 2. Calcola il totale di NA per variabile (su tutti i cluster)
+total_missing <- missing_by_cluster %>%
+  group_by(variable) %>%
+  summarise(total_na = sum(na_count))
+
+# 3. Calcola la percentuale di NA di ciascun cluster rispetto al totale della variabile
+missing_pct_by_cluster <- missing_by_cluster %>%
+  left_join(total_missing, by = "variable") %>%
+  mutate(pct_missing_cluster = (na_count / total_na) * 100)
+
+# 4a. Barplot stacked: distribuzione % dei NA per variabile
+p1 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = pct_missing_cluster, fill = factor(cluster))) +
+  geom_bar(stat = "identity", position = "stack") +
+  coord_flip() +
+  labs(title = "Distribuzione percentuale dei missing per variabile nei cluster",
+       x = "Variabile", y = "% dei missing (per cluster)", fill = "Cluster")
+
+# 4b. Heatmap: percentuale di missing per variabile × cluster
+p2 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = factor(cluster), fill = pct_missing_cluster)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "red") +
+  labs(title = "Percentuale dei missing per variabile e cluster",
+       x = "Variabile", y = "Cluster", fill = "% dei missing") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 5. Visualizza entrambi i grafici
+p1
+p2
+```
+
+
+
+```{r}
 
 ```
+
+
 
 ## -----Cluster Evaluation
 fare DA con Mclust per vedere se i risultati sono 'correlati' a charges, rimuovere charges dal modello
@@ -577,7 +761,7 @@ variabili più influenti di ogni dimensione fattoriale MCA
 
 ```{r}
 # Descrizione delle dimensioni MCA
-dim_desc <- dimdesc(res_mca, axes = 1:3)
+dim_desc <- dimdesc(res.mca_vars_2, axes = 1:3)
 
 # Variabili più influenti per Dim1
 dim_desc[[1]]$quali
@@ -589,7 +773,7 @@ dim_desc[[2]]$quali
 dim_desc[[3]]$quali
 ```
 
-Analisi supervisionata sui clusters prodotto da MCA + kmeans. Ne risulta che gli assi fattoriali maggiormente discriminante sono il terzo, influito maggiormente dalla patologia del paziente, e il primo asse, dove gioca un ruolo importante anche lo status del paziente
+
 
 ```{r}
 mca_dataframe <- data.frame(
@@ -616,24 +800,6 @@ fancyRpartPlot(tree_model)
 ```
 
 ## cluster --\> Kmeans su meanbp, hrt, temp (prime 3 variabili discriminanti)
-
-```{r}
-data_simple_kmeans$cluster = km_simple$cluster
-
-
-tree_model_2 <- rpart(
-  cluster ~ .,
-  data = data_simple_kmeans,
-  method = "class",
-  control = rpart.control(
-    minsplit = 20,   
-    cp = 0.01,       
-    maxdepth = 4     
-  )
-)
-
-fancyRpartPlot(tree_model_2)
-```
 
 # --------------APPROFONDIRE
 -correzione Benzecri per MCA per l'inertia spiegata
@@ -851,6 +1017,8 @@ library(iml)
 dplyr::glimpse(train)
 ```
 
+
+
 ```{r}
 svm_fit_model <- svm_fit %>% extract_fit_parsnip() %>% pluck("fit")
 
@@ -883,9 +1051,6 @@ pdp_age <- FeatureEffect$new(
 
 # Plot
 pdp_age$plot() + theme_minimal()
-
-
-
 ```
 
 ## SHAP
