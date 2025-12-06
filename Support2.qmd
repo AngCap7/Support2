@@ -743,16 +743,33 @@ p2
 
 
 ```{r}
-skim_all <- data_joined %>%
-  skimr::skim()
+data_missing10 = data_missing10 |> 
+  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
 
-# Solo cluster 3
-skim_cluster3 <- data_joined %>%
-  filter(cluster == 3) %>%
-  skimr::skim()
+data_joined = data_joined |> 
+  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
+```
 
-skim_all
-skim_cluster3
+Grafici più significativi: num.co, charges
+
+
+
+```{r}
+data_long <- data_joined %>%
+  select(cluster3, num.co, charges, sps, aps) %>%
+  pivot_longer(cols = c(num.co, charges),
+               names_to = "variabile",
+               values_to = "valore")
+
+# Boxplot per ciascuna variabile divisa per cluster3
+ggplot(data_long, aes(x = factor(cluster3), y = valore, fill = factor(cluster3))) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  facet_wrap(~ variabile, scales = "free_y") +
+  labs(x = "Cluster3", y = "Value", 
+       title = "Cluster 3 analysis") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold"))
 ```
 
 
