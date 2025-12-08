@@ -5,10 +5,6 @@ format: html
 editor: visual
 ---
 
-# DUBBI
-
--PCA e MCA hanno dimensioni che racchiudono poca varianza/inertia spiegata
-
 ```{r setup, include = FALSE, echo = FALSE}
 library(tidymodels)
 library(tidyverse)
@@ -34,6 +30,8 @@ library(dplyr)
 library(tidyr)
 library(purrr)
 library(rattle)
+library(iml)
+library(lime)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -157,7 +155,6 @@ for(v in vars){
 for(p in density_plots) print(p)
 ```
 
-
 ## Numerical Features
 
 ### Correlation matrix
@@ -263,12 +260,7 @@ tibble(
   arrange(desc(perc_na))
 ```
 
-
-Imputazione valori mancanti delle restanti variabili (missForest):
-
-1)  Inizializza i valori mancanti con stime semplici.
-2)  Iterativamente, per ogni variabile con NA, costruisce una foresta usando le altre variabili come predittori e riempie i valori mancanti.
-3)  Ripete finché converge o raggiunge il limite di iterazioni. Funziona bene con variabili miste (numeriche e categoriche) e non richiede assunzioni parametriche.
+Imputazione valori mancanti delle restanti variabili
 
 ```{r}
 data <- data |>
@@ -456,7 +448,7 @@ p3d <- plotly::plot_ly(
 p3d
 ```
 
-## 👎✅GMM  (3 variabili)
+## 👎✅GMM (3 variabili)
 
 ```{r}
 GMM = Mclust(num_data_scaled, G = 4, modelNames = "EII")
@@ -487,7 +479,8 @@ data_scaled |>
   })()
 ```
 
-## ✅MCA + Kmeans  (tutte le variabili categoriche)
+## ✅MCA + Kmeans (tutte le variabili categoriche)
+
 mca con 4 componenti
 
 ```{r, warnings=FALSE}
@@ -552,15 +545,13 @@ xyplot(
 
 ```
 
-## ----- MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
-categorizzare le 3 numeriche e fare MCA globale (bspline), le categorie si scelgono in base al numero di nodi della spline
+## ✅✅MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
+categorizzare le 3 numeriche e fare MCA globale 
 ```{r}
 num_vars <- data_scaled |> select(meanbp, hrt, temp)
 
-# Calcolo min, mediana e max per ciascuna variabile
-stats <- num_vars |> summarise(across(everything(), list(min=min, med=median, max=max)))
+stats <- num_vars |> summarise(across(everything(), list(min=min, med=median, max=max))) |> as.list()
 
-# Fuzzy encoding semplice
 fuzzy_encoded <- num_vars |> mutate(
   meanbp_low  = pmax(0, (stats$meanbp_med - meanbp)/(stats$meanbp_med - stats$meanbp_min)),
   meanbp_mid  = pmax(0, 1 - abs(meanbp - stats$meanbp_med)/(stats$meanbp_max - stats$meanbp_min)),
@@ -576,82 +567,60 @@ fuzzy_encoded <- num_vars |> mutate(
 ) |> 
   select(-c(meanbp, temp, hrt))
 
+meanbp_cat <- factor(c("low","mid","high")[max.col(fuzzy_encoded[,c("meanbp_low","meanbp_mid","meanbp_high")])])
+hrt_cat    <- factor(c("low","mid","high")[max.col(fuzzy_encoded[,c("hrt_low","hrt_mid","hrt_high")])])
+temp_cat   <- factor(c("low","mid","high")[max.col(fuzzy_encoded[,c("temp_low","temp_mid","temp_high")])])
 
-#categorizzazione sfruttando la fuzzy
-meanbp_cat <- apply(fuzzy_encoded[, c("meanbp_low","meanbp_mid","meanbp_high")], 1, 
-                    function(x) c("low","mid","high")[which.max(x)])
-hrt_cat <- apply(fuzzy_encoded[, c("hrt_low","hrt_mid","hrt_high")], 1, 
-                 function(x) c("low","mid","high")[which.max(x)])
-temp_cat <- apply(fuzzy_encoded[, c("temp_low","temp_mid","temp_high")], 1, 
-                  function(x) c("low","mid","high")[which.max(x)])
-# Trasforma in fattori
-meanbp_cat = factor(meanbp_cat)
-hrt_cat = factor(hrt_cat)
-temp_cat = factor(temp_cat)
-
-# Integro con le categoriche
 categorical_vars <- data_scaled |> select_if(is.factor)
-  
-categorica_fuzzy = categorical_vars |> 
-  cbind(fuzzy_encoded)
-
-
 categorical_vars_ext <- categorical_vars |> 
   mutate(meanbp_cat = meanbp_cat,
          hrt_cat    = hrt_cat,
          temp_cat   = temp_cat) |> 
-  select(-income)
-# Ricodifica dummy (0/1) di tutte le categoriche
+  select(-income)   # se vuoi escludere income
+
 ```
 
-
-# 7) Factor Analsys mixture data sulla matrice delle categoriche + fuzzy (equivalente MCA sulle categorie)
 ```{r}
-res.famd_vars <- FAMD(categorica_fuzzy, graph = FALSE)
+#MCA
+res.mca_vars <- MCA(categorical_vars_ext, graph = FALSE)
+fviz_mca_var(res.mca_vars, repel = TRUE) 
 
-#CA sulla Burt versione 2 (meanbp, temp, hrt categoriche) (equivalente MCA sulle categorie)
-res.mca_vars_2 = MCA(categorical_vars_ext, graph = FALSE)
-```
+#KMEANS
+coords_mca <- res.mca_vars$ind$coord[,c(1,3)]
+fviz_nbclust(coords_mca, kmeans, method = "silhouette")
 
-
-
-```{r}
-fviz_mca_var(res.mca_vars_2, repel = TRUE, )   # categorie (colonne della Burt)
-```
-
-
-```{r}
-plot.FAMD(res.famd_vars)
-```
-
-
-Kmeans sulla prima e terza dimensione della MCA sulla matrice di Burt 2.0 (meanbp, hrt e temp categoriche semplici)
-```{r}
-coords_mca_2 <- res.mca_vars_2$ind$coord[,c(1,3)]
-
-# 2. Calcolo silhouette per diversi k
-fviz_nbclust(coords_mca_2, kmeans, method = "silhouette")
-
-# 4. Supponiamo che il grafico suggerisca k = 3
-set.seed(123)
-res.mca_kmeans_2 <- kmeans(coords_mca_2, centers = 4, nstart = 25)
-
-# 5. Visualizzo i cluster sulla mappa MCA
-fviz_cluster(res.mca_kmeans_2, data = coords_mca_2,
+set.seed(6)
+res.mca_kmeans <- kmeans(coords_mca, centers = 4, nstart = 25)
+fviz_cluster(res.mca_kmeans, data = coords_mca,
              geom = "point",
              labelsize = 4,
              main = "K-means + MCA")
+
 ```
 
+## Evaluate Results
+variabili più influenti di ogni dimensione fattoriale MCA
+```{r}
+# Descrizione delle dimensioni MCA
+dim_desc <- dimdesc(res.mca_vars, axes = 1:3)
 
+# Variabili più influenti per Dim1
+dim_desc[[1]]$quali
 
-# ------Evaluate Results
+# Variabili più influenti per Dim2
+dim_desc[[2]]$quali
 
-## ------Surrogate Model
+# Variabili più influenti per Dim3
+dim_desc[[3]]$quali
+```
+
+### ------Surrogate Model
+
 modello supervisionato, mettere variabili che non hanno partecipato al cluster
+
 ```{r}
 sur_mod_dataframe <- data.frame(
-  cluster = res.mca_kmeans_2$cluster,
+  cluster = res.mca_kmeans$cluster,
   income = categorical_vars$income,
   slos = data_scaled$slos,
   sod = data_scaled$sod,
@@ -665,22 +634,23 @@ sur_mod_dataframe <- data.frame(
 )
 
 surrogate_model <- rpart(
-  cluster ~ n_comorbidity + charges,
+  cluster ~ .,
   data = sur_mod_dataframe,
   method = "class",
   control = rpart.control(
-    minsplit = 250,   
-    cp = 0.06,       
-    maxdepth = 5   
+    minsplit = 250,   # più basso → più scissioni
+    cp = 0.01,       # meno penalizzazione → più variabili entrano
+    maxdepth = 30    # albero più profondo
   )
 )
 
 fancyRpartPlot(surrogate_model)
 ```
 
+### ------NA Evaluation
 
-## -----NA Evaluation
 valutare variabili con missing dopo il clustering
+
 ```{r}
 categorical_vars_with_id = categorical_vars_ext |> 
   mutate(id = data_scaled$id)
@@ -688,9 +658,8 @@ categorical_vars_with_id = categorical_vars_ext |>
 data_joined <- support2_na_analysis %>%
   mutate(id = data$id) |> 
   dplyr::semi_join(categorical_vars_with_id, by = "id") |> 
-  mutate(cluster = res.mca_kmeans_2$cluster)
+  mutate(cluster = res.mca_kmeans$cluster)
 ```
-
 
 ```{r}
 vars_with_missing10 <- data_joined %>%
@@ -740,8 +709,6 @@ p1
 p2
 ```
 
-
-
 ```{r}
 data_missing10 = data_missing10 |> 
   mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
@@ -751,8 +718,6 @@ data_joined = data_joined |>
 ```
 
 Grafici più significativi: num.co, charges
-
-
 
 ```{r}
 data_long <- data_joined %>%
@@ -771,105 +736,17 @@ ggplot(data_long, aes(x = factor(cluster3), y = valore, fill = factor(cluster3))
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
 ```
+### ------Cluster Evaluation
 
-
-
-## -----Cluster Evaluation
 fare DA con Mclust per vedere se i risultati sono 'correlati' a charges, rimuovere charges dal modello
+
 ```{r}
 
 ```
 
-# EXTRA 1
-## cluster --\> MCA+kmeans
 
-variabili più influenti di ogni dimensione fattoriale MCA
-
-```{r}
-# Descrizione delle dimensioni MCA
-dim_desc <- dimdesc(res.mca_vars_2, axes = 1:3)
-
-# Variabili più influenti per Dim1
-dim_desc[[1]]$quali
-
-# Variabili più influenti per Dim2
-dim_desc[[2]]$quali
-
-# Variabili più influenti per Dim3
-dim_desc[[3]]$quali
-```
-
-
-
-```{r}
-mca_dataframe <- data.frame(
-  cluster = mca_clusters$cluster,
-  meanbp = num_data_scaled$meanbp,
-  hrt = num_data_scaled$hrt,
-  temp = num_data_scaled$temp
-)
-
-tree_model <- rpart(
-  cluster ~ .,
-  data = mca_dataframe,
-  method = "class",
-  control = rpart.control(
-    minsplit = 20,   
-    cp = 0.01,       
-    maxdepth = 4     
-  )
-)
-
-library(rattle)
-
-fancyRpartPlot(tree_model)
-```
-
-## cluster --\> Kmeans su meanbp, hrt, temp (prime 3 variabili discriminanti)
-
-# --------------APPROFONDIRE
--correzione Benzecri per MCA per l'inertia spiegata
-
-```{r}
-# SOLO PER STUDIARE
-# Source - https://stackoverflow.com/a
-# Posted by VincentP
-# Retrieved 2025-12-03, License - CC BY-SA 4.0
-
-mca <- MCA(mydata)
-#Benzecri correction
-p <- nrow(mca$eig)+1
-lambda <- mca$eig[,1]
-lambdaC <- lambda
-lambdaT <- which(lambda>=1/p)
-
-#eig.val corrected
-lambdaC=(p/(p-1))*(lambdaC[lambdaT]-(1/p))^2
-
-#percentage of variances explained per axes
-ptd <- (lambdaC/sum(lambdaC))
-
-#cumulated percentage of explained variance
-cum <- cumsum(lambdaC/sum(lambdaC))
-correc <- cbind(lambdaC,ptd,cum*100)
-correc = as.data.frame(correc)
-correc
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-# ------------------------------
 # IODICE
+
 # Supervised Learning
 
 ```{r}
@@ -940,7 +817,7 @@ chi_results |> arrange(p_value)
 ## -------Feature Selection
 
 ```{r}
-
+#remove charges 
 ```
 
 ## Feature scaling
@@ -1043,10 +920,8 @@ library(iml)
 dplyr::glimpse(train)
 ```
 
-
-
 ```{r}
-svm_fit_model <- svm_fit %>% extract_fit_parsnip() %>% pluck("fit")
+svm_fit_model <- svm_final_fit %>% extract_fit_parsnip() %>% pluck("fit")
 
 # Funzione di predizione (probabilità classe positiva)
 svm_predict_fun <- function(model, newdata) {
@@ -1063,6 +938,7 @@ svm_pred <- Predictor$new(
   predict.function = svm_predict_fun
 )
 ```
+
 
 ## PDP/ALE
 
@@ -1081,10 +957,126 @@ pdp_age$plot() + theme_minimal()
 
 ## SHAP
 
-# ----------------------------------
+visualise observations classification on test set
+```{r}
+# Predizioni sul test set
+preds <- collect_predictions(svm_final_fit)
 
-# EXTRA 2
+# Aggiungi colonna case_type
+preds <- preds %>%
+  mutate(
+    case_type = case_when(
+      death == 1 & .pred_class == 1 ~ "TP",
+      death == 0 & .pred_class == 0 ~ "TN",
+      death == 0 & .pred_class == 1 ~ "FP",
+      death == 1 & .pred_class == 0 ~ "FN"
+    )
+  )
 
-# Unsupervised Learning
+# Ottieni gli indici (.row) per ciascun gruppo
+tp_index <- preds %>% filter(case_type == "TP") %>% pull(.row)
+tn_index <- preds %>% filter(case_type == "TN") %>% pull(.row)
+fp_index <- preds %>% filter(case_type == "FP") %>% pull(.row)
+fn_index <- preds %>% filter(case_type == "FN") %>% pull(.row)
+
+# Visualizza
+cat("TP: ",tp_index)
+cat("\n\nTN: ",tn_index)
+cat("\n\nFP: ",fp_index)
+cat("\n\nFN: ",fn_index)
+```
+
+```{r}
+library(ggplot2)
+
+# Indici delle osservazioni da analizzare
+#obs_index <- c(12, 134, 165, 170, 182, 207)
+obs_index <- c(2,3,10)
+# Calcolo Shapley values per ciascuna osservazione
+shap_all <- lapply(obs_index, function(i) {
+  x_test <- train_baked[i, -which(names(train_baked)=="death"), drop = FALSE]
+  shap <- Shapley$new(svm_pred, x.interest = x_test)
+  df <- shap$results
+  df$obs_id <- i   # aggiungo l'indice per facet_wrap
+  df
+})
+
+# Unisco in un unico data frame
+shap_all_df <- do.call(rbind, shap_all)
+
+# Grafico con facet_wrap
+ggplot(shap_all_df, aes(x = feature, y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_manual(values = c("TRUE" = "#F07F28", "FALSE" = "#20B2AA")) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Shapley values",
+    x = "Features",
+    y = "Contribute (phi)"
+  ) +
+  facet_wrap(~ obs_id, ncol = 2)
+
+```
+## LIME
+```{r}
+# Funzioni necessarie per lime con ksvm
+model_type.ksvm <- function(x, ...) "classification"
+predict_model.ksvm <- function(x, newdata, ...) {
+  as.data.frame(predict(x, newdata = newdata, type = "probabilities"))
+}
+
+# Explainer sui dati baked (senza target)
+explainer <- lime(
+  x = train_baked %>% select(-death),
+  model = svm_fit_model,
+  bin_continuous = TRUE
+)
+
+# Osservazioni da analizzare
+obs_index <- c(12, 134)
+cases <- train_baked %>% select(-death) %>% slice(obs_index)
+
+# Spiegazioni locali
+set.seed(6)
+explanations <- explain(
+  x = cases,
+  explainer = explainer,
+  n_features = 6,
+  n_permutations = 5000,
+  kernel_width = 0.75,
+  labels = levels(train_baked$death)[2]   # classe positiva
+)
+
+# Grafico
+plot_features(explanations) +
+  theme_minimal(base_size = 14) +
+  labs(title = "LIME explanations")
+
+```
+
+
+
+# EXTRA 2: Unsupervised Learning
 
 Dopo la classificazione supervisionata, Fare clustering sui valori di Shapley
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
