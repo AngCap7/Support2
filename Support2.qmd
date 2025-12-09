@@ -597,6 +597,10 @@ fviz_cluster(res.mca_kmeans, data = coords_mca,
              main = "K-means + MCA")
 
 ```
+## -----FAMD
+```{r}
+
+```
 
 ## Evaluate Results
 variabili più influenti di ogni dimensione fattoriale MCA
@@ -614,7 +618,7 @@ dim_desc[[2]]$quali
 dim_desc[[3]]$quali
 ```
 
-### ------Surrogate Model
+### -----Surrogate Model
 
 modello supervisionato, mettere variabili che non hanno partecipato al cluster
 
@@ -647,7 +651,7 @@ surrogate_model <- rpart(
 fancyRpartPlot(surrogate_model)
 ```
 
-### ------NA Evaluation
+### NA Evaluation
 
 valutare variabili con missing dopo il clustering
 
@@ -668,35 +672,35 @@ vars_with_missing10 <- data_joined %>%
   filter(pct_missing >= 10) %>%
   pull(variable)
 
-# 2. Dataset filtrato con cluster + variabili selezionate
+# Dataset filtrato con cluster + variabili selezionate
 data_missing10 <- data_joined %>%
   select(cluster, all_of(vars_with_missing10))
 
-# 3. Analisi dei mancanti per cluster (percentuali)
+# Analisi dei mancanti per cluster (percentuali)
 missing_by_cluster <- data_missing10 %>%
   group_by(cluster) %>%
   summarise(across(everything(), ~ sum(is.na(.)), .names = "na_{col}")) %>%
   pivot_longer(-cluster, names_to = "variable", values_to = "na_count")
 
 
-# 2. Calcola il totale di NA per variabile (su tutti i cluster)
+# Calcola il totale di NA per variabile (su tutti i cluster)
 total_missing <- missing_by_cluster %>%
   group_by(variable) %>%
   summarise(total_na = sum(na_count))
 
-# 3. Calcola la percentuale di NA di ciascun cluster rispetto al totale della variabile
+# Calcola la percentuale di NA di ciascun cluster rispetto al totale della variabile
 missing_pct_by_cluster <- missing_by_cluster %>%
   left_join(total_missing, by = "variable") %>%
   mutate(pct_missing_cluster = (na_count / total_na) * 100)
 
-# 4a. Barplot stacked: distribuzione % dei NA per variabile
+# Barplot stacked: distribuzione % dei NA per variabile
 p1 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = pct_missing_cluster, fill = factor(cluster))) +
   geom_bar(stat = "identity", position = "stack") +
   coord_flip() +
   labs(title = "Distribuzione percentuale dei missing per variabile nei cluster",
        x = "Variabile", y = "% dei missing (per cluster)", fill = "Cluster")
 
-# 4b. Heatmap: percentuale di missing per variabile × cluster
+# Heatmap: percentuale di missing per variabile × cluster
 p2 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = factor(cluster), fill = pct_missing_cluster)) +
   geom_tile(color = "white") +
   scale_fill_gradient(low = "white", high = "red") +
@@ -708,37 +712,37 @@ p2 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = factor(cluster), fill
 p1
 p2
 ```
+da questi risultati emerge che i NA cadono molto nel cluster 1: potrebbero non essere random
 
+ipotetico profilo paziente per i NA in questione
 ```{r}
 data_missing10 = data_missing10 |> 
-  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
+  mutate(cluster3 = as.integer(ifelse(cluster == 1, 1, 0)))
 
 data_joined = data_joined |> 
-  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
+  mutate(cluster1 = as.integer(ifelse(cluster == 1, 1, 0)))
 ```
 
-Grafici più significativi: num.co, charges
+variabili con molti NA nello stesso cluster: num.co, charges
 
 ```{r}
 data_long <- data_joined %>%
-  select(cluster3, num.co, charges, sps, aps) %>%
+  select(cluster1, num.co, charges, sps, aps) %>%
   pivot_longer(cols = c(num.co, charges),
                names_to = "variabile",
                values_to = "valore")
 
-# Boxplot per ciascuna variabile divisa per cluster3
+# Boxplot per ciascuna variabile divisa per cluster1
 ggplot(data_long, aes(x = factor(cluster3), y = valore, fill = factor(cluster3))) +
   geom_boxplot(outlier.alpha = 0.3) +
   facet_wrap(~ variabile, scales = "free_y") +
-  labs(x = "Cluster3", y = "Value", 
-       title = "Cluster 3 analysis") +
+  labs(x = "Cluster1", y = "Value", 
+       title = "Cluster 1 analysis") +
   theme_minimal() +
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
 ```
-### ------Cluster Evaluation
-
-fare DA con Mclust per vedere se i risultati sono 'correlati' a charges, rimuovere charges dal modello
+### -----Profile for each cluster
 
 ```{r}
 
@@ -817,7 +821,7 @@ chi_results |> arrange(p_value)
 ## -------Feature Selection
 
 ```{r}
-#remove charges 
+
 ```
 
 ## Feature scaling
