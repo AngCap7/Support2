@@ -313,6 +313,17 @@ ggpairs(
 )
 ```
 
+```{r}
+set.seed(6)
+
+split <- initial_split(data_scaled, prop = 0.8, strata = death)
+train <- training(split)
+test  <- testing(split)
+
+folds <- vfold_cv(train, v = 10, strata = death)
+```
+
+
 PCA, Scelta del numero ragionevole di componenti
 
 ```{r}
@@ -597,10 +608,118 @@ fviz_cluster(res.mca_kmeans, data = coords_mca,
              main = "K-means + MCA")
 
 ```
+
 ## -----FAMD
+
 ```{r}
+set.seed(123)
+res_famd <- train |> 
+  FAMD(ncp = 5, graph = TRUE)
+
+# Scree plot per valutare quante dimensioni mantenere
+fviz_screeplot(res_famd)
+```
+
+applicazione del kmeans con FAMD
+```{r}
+coords_famd <- res_famd$ind$coord   # matrice n_individui x ncp
+
+fviz_nbclust(coords_famd, kmeans)
+set.seed(123)  # per riproducibilità
+famd_km_res <- kmeans(coords_famd, centers = 2, nstart = 25)
+```
+
+creazione del dataframe FAMD
+```{r}
+coords_famd = as.data.frame(coords_famd)
+
+colnames(coords_famd) = c("Dim1", "Dim2", "Dim3", "Dim4", "Dim5")
+
+coords_famd$cluster = famd_km_res$cluster
+```
+
+
+Grafico per visualizzare la divisione in clusters
+```{r}
+ggplot(coords_famd, aes(x = Dim1, y = Dim2, color = factor(cluster))) +
+  geom_point(size = 1, alpha = 0.7) +
+  labs(title = "Scatterplot FAMD-Kmeans",
+       x = "Dim 1",
+       y = "Dim 2",
+       color = "Cluster") +
+  theme_minimal()
+```
+
+Applicazione del metodo sul test set
+```{r}
+res_famd_test <- predict(res_famd, newdata = test)
+
+coords_test <- as.data.frame(res_famd_test$coord)
+
+colnames(coords_test) = c("Dim1", "Dim2", "Dim3", "Dim4", "Dim5")
+
+# Assegna ogni individuo al cluster più vicino
+test$cluster <- apply(coords_test, 1, function(x) {
+  which.min(colSums((t(famd_km_res$centers) - x)^2))
+})
+```
+
+
+Grafico FAMD-Kmeans su test set
+```{r}
+ggplot(coords_test, aes(x = Dim1 , y = Dim2 , color = factor(test$cluster))) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Scatterplot FAMD-Kmeans (Test set)",
+       x = "Dim 1",
+       y = "Dim 2",
+       color = "Cluster") +
+  theme_minimal()
+```
+
+Applicazione ranger cluster ~ tutte le variabili non usate nel cluster e stampa della feature importance
+```{r}
+library(ranger)
+
+# 1. Left join su id
+joined <- support2_na_analysis %>%
+  inner_join(train %>% select(id), by = "id")
+
+# 2. Identificare le colonne comuni
+common_cols <- intersect(colnames(support2_na_analysis), colnames(train))
+
+# 3. Selezionare solo le variabili di support2_na_analysis non presenti in train
+support_vars <- setdiff(colnames(support2_na_analysis), common_cols)
+
+joined$cluster = coords_famd$cluster
+
+# 4. Costruire dataset finale con cluster come risposta
+data_RF <- joined %>%
+  select(all_of(support_vars), cluster) |> 
+  select(-sfdm2)
+
+# 5. Random Forest
+set.seed(123)
+rf_model <- ranger(cluster ~ ., data = data_RF, mtry = 4, importance = "impurity_corrected")
+
+importance_df <- data.frame(
+  variable = names(rf_model$variable.importance),
+  importance = rf_model$variable.importance
+)
+
+# 2. Ordinare per importanza
+importance_df <- importance_df[order(importance_df$importance, decreasing = TRUE), ]
+
+# 3. Plot con ggplot2 (top 20 variabili)
+ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Feature Importance",
+       x = "Feature",
+       y = "Importance") +
+  theme_minimal()
 
 ```
+
 
 ## Evaluate Results
 variabili più influenti di ogni dimensione fattoriale MCA
@@ -665,6 +784,8 @@ data_joined <- support2_na_analysis %>%
   mutate(cluster = res.mca_kmeans$cluster)
 ```
 
+
+
 ```{r}
 vars_with_missing10 <- data_joined %>%
   summarise(across(everything(), ~ mean(is.na(.))*100)) %>%
@@ -717,17 +838,17 @@ da questi risultati emerge che i NA cadono molto nel cluster 1: potrebbero non e
 ipotetico profilo paziente per i NA in questione
 ```{r}
 data_missing10 = data_missing10 |> 
-  mutate(cluster3 = as.integer(ifelse(cluster == 1, 1, 0)))
+  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
 
 data_joined = data_joined |> 
-  mutate(cluster1 = as.integer(ifelse(cluster == 1, 1, 0)))
+  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
 ```
 
 variabili con molti NA nello stesso cluster: num.co, charges
 
 ```{r}
 data_long <- data_joined %>%
-  select(cluster1, num.co, charges, sps, aps) %>%
+  select(cluster3, num.co, charges, sps, aps) %>%
   pivot_longer(cols = c(num.co, charges),
                names_to = "variabile",
                values_to = "valore")
@@ -736,8 +857,8 @@ data_long <- data_joined %>%
 ggplot(data_long, aes(x = factor(cluster3), y = valore, fill = factor(cluster3))) +
   geom_boxplot(outlier.alpha = 0.3) +
   facet_wrap(~ variabile, scales = "free_y") +
-  labs(x = "Cluster1", y = "Value", 
-       title = "Cluster 1 analysis") +
+  labs(x = "Clusterw", y = "Value", 
+       title = "Cluster w analysis") +
   theme_minimal() +
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
@@ -844,15 +965,7 @@ head(tot_data_scaled)
 
 ## SVM
 
-```{r}
-set.seed(6)
 
-split <- initial_split(tot_data_scaled, prop = 0.8, strata = death)
-train <- training(split)
-test  <- testing(split)
-
-folds <- vfold_cv(train, v = 10, strata = death)
-```
 
 ```{r}
 svm_rec <- recipe(death ~ ., data = train) |>                     # 
