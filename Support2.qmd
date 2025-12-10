@@ -32,6 +32,8 @@ library(purrr)
 library(rattle)
 library(iml)
 library(lime)
+library(pheatmap)
+library(treemapify)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -591,6 +593,8 @@ categorical_vars_ext <- categorical_vars |>
 
 ```
 
+
+
 ```{r}
 #MCA
 res.mca_vars <- MCA(categorical_vars_ext, graph = FALSE)
@@ -611,9 +615,12 @@ fviz_cluster(res.mca_kmeans, data = coords_mca,
 
 ## -----FAMD
 
+Si riescono a distinguere due gruppi di pazienti:
+il primo gruppo (quello in alto) è associato alle malattie oncologiche, il secondo (quello più numeroso) è caratterizzato da pazienti da malattie cardiopolmonari.
 ```{r}
 set.seed(123)
 res_famd <- train |> 
+  select(-id) |> 
   FAMD(ncp = 5, graph = TRUE)
 
 # Scree plot per valutare quante dimensioni mantenere
@@ -639,7 +646,7 @@ coords_famd$cluster = famd_km_res$cluster
 ```
 
 
-Grafico per visualizzare la divisione in clusters
+Grafico per visualizzare la divisione in clusters: pazienti con malattie oncologiche vs malattie cardiopolmonari
 ```{r}
 ggplot(coords_famd, aes(x = Dim1, y = Dim2, color = factor(cluster))) +
   geom_point(size = 1, alpha = 0.7) +
@@ -695,7 +702,7 @@ joined$cluster = coords_famd$cluster
 # 4. Costruire dataset finale con cluster come risposta
 data_RF <- joined %>%
   select(all_of(support_vars), cluster) |> 
-  select(-sfdm2)
+  select(-c(sfdm2, surv2m, sps, surv6m))
 
 # 5. Random Forest
 set.seed(123)
@@ -717,6 +724,29 @@ ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = impor
        x = "Feature",
        y = "Importance") +
   theme_minimal()
+```
+
+
+
+#Na evaluation FAMD
+
+```{r}
+# --- Step 1: Percentuali di NA per variabile e cluster ---
+na_summary <- data_RF %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), ~ mean(is.na(.)) * 100))
+
+# Heatmap delle percentuali di NA
+mat <- as.matrix(na_summary[,-1])
+rownames(mat) <- paste("Cluster", na_summary$cluster)
+
+pheatmap(mat,
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         main = "NA percentage by cluster")
+```
+
+
 
 ```
 
@@ -946,7 +976,6 @@ chi_results |> arrange(p_value)
 ```
 
 ## Feature scaling
-
 ```{r}
 tot_data_scaled = tot_data |> 
   mutate(across(
@@ -957,18 +986,22 @@ tot_data_scaled = tot_data |>
 head(tot_data_scaled)
 ```
 
-## -------Unbalanced class
 
 ```{r}
+train_svm = train |> 
+  select(-id)
+
+test_svm = test |> 
+  select(-id, cluster)
+
 
 ```
 
+
 ## SVM
 
-
-
 ```{r}
-svm_rec <- recipe(death ~ ., data = train) |>                     # 
+rec <- recipe(death ~ ., data = train_svm) |>                      
   step_dummy(all_nominal_predictors())           # dummy encodin                            
 # Specifica modello SVM con kernel RBF
 svm_spec <- svm_rbf(
@@ -981,7 +1014,7 @@ svm_spec <- svm_rbf(
 # Workflow
 svm_wf <- workflow() |>
   add_model(svm_spec) |>
-  add_recipe(svm_rec)
+  add_recipe(rec)
 ```
 
 tuning Grid Search prova tutte le combinazioni possibili di iperparametri in una griglia predefinita, mentre Bayesian Optimization non prova tutte le combinazioni: costruisce un modello probabilistico dello spazio dei parametri
@@ -999,7 +1032,8 @@ svm_grid_res <- tune_grid(
   svm_wf,
   resamples = folds,
   grid = svm_grid,
-  metrics = metric_set(roc_auc)
+  metrics = metric_set(roc_auc),
+  control = control_grid(save_pred = TRUE)
 )
 
 # Step 2: tuning bayesiano partendo dai risultati della griglia
@@ -1009,7 +1043,7 @@ svm_bayes <- tune_bayes(
   metrics = metric_set(roc_auc),
   initial = svm_grid_res,             
   iter = 3,
-  control = control_bayes(verbose = TRUE)
+  control = control_bayes(verbose = TRUE, save_pred = TRUE)
 )
 
 # Migliori parametri
@@ -1029,6 +1063,94 @@ svm_final_fit |>
   conf_mat(truth = death, estimate = .pred_class)
 ```
 
+
+## LR penalized
+
+
+```{r}
+# Specifica modello: logistic regression penalizzata
+log_reg_spec <- logistic_reg(
+  mode = "classification",
+  penalty = tune(),       # parametro di penalizzazione (L1/L2)
+  mixture = 1             # 1 = LASSO, 0 = Ridge, valori intermedi = Elastic Net
+) |>
+  set_engine("glmnet")
+
+# Workflow
+log_reg_wf <- workflow() |>
+  add_model(log_reg_spec) |>
+  add_recipe(rec)   # puoi riutilizzare la stessa ricetta
+```
+
+
+```{r}
+log_reg_grid <- tibble(
+  penalty = c(0.001, 0.01, 0.1, 1)
+)
+
+log_reg_grid_res <- tune_grid(
+  log_reg_wf,
+  resamples = folds,
+  grid = log_reg_grid,
+  metrics = metric_set(roc_auc),
+  control = control_grid(save_pred = TRUE)
+)
+
+# Step 2: tuning bayesiano partendo dai risultati della griglia
+log_reg_bayes <- tune_bayes(
+  log_reg_wf,
+  resamples = folds,
+  metrics = metric_set(roc_auc),
+  initial = log_reg_grid_res,
+  iter = 3,
+  control = control_bayes(verbose = TRUE, save_pred = TRUE)
+)
+```
+
+
+```{r}
+best_params_lr <- select_best(log_reg_bayes, metric = "roc_auc")
+final_lr <- finalize_workflow(log_reg_wf, best_params_lr)
+```
+
+
+```{r}
+lr_final_fit <- last_fit(final_lr, split)
+
+collect_metrics(lr_final_fit)
+
+lr_final_fit |> 
+  collect_predictions() |> 
+  conf_mat(truth = death, estimate = .pred_class)
+```
+
+
+
+```{r}
+svm_test_preds <- collect_predictions(svm_final_fit)
+lr_test_preds  <- collect_predictions(lr_final_fit)
+```
+
+
+```{r}
+# Calcola ROC separatamente e aggiungi la colonna 'model'
+svm_roc <- svm_test_preds %>%
+  roc_curve(truth = death, .pred_0) %>%
+  mutate(model = "SVM")
+
+log_reg_roc <- lr_test_preds %>%
+  roc_curve(truth = death, .pred_0) %>%
+  mutate(model = "Logistic Regression")
+
+# Confronto ROC
+bind_rows(svm_roc, log_reg_roc) %>%
+  autoplot() +
+  aes(color = model) +
+  labs(title = "Test ROC Curve: SVM vs Logistic Regression")
+
+```
+
+
 ## -------Interpretability
 
 ```{r}
@@ -1036,6 +1158,7 @@ library(iml)
 
 dplyr::glimpse(train)
 ```
+
 
 ```{r}
 svm_fit_model <- svm_final_fit %>% extract_fit_parsnip() %>% pluck("fit")
@@ -1046,7 +1169,7 @@ svm_predict_fun <- function(model, newdata) {
 }
 
 # Predictor per iml (usa i dati trasformati dalla ricetta!)
-train_baked <- bake(prep(svm_rec, training = train), new_data = train)
+train_baked <- bake(prep(rec, training = train), new_data = train)
 
 svm_pred <- Predictor$new(
   model = svm_fit_model,
@@ -1136,6 +1259,7 @@ ggplot(shap_all_df, aes(x = feature, y = phi, fill = phi > 0)) +
 
 ```
 ## LIME
+
 ```{r}
 # Funzioni necessarie per lime con ksvm
 model_type.ksvm <- function(x, ...) "classification"
