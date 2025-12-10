@@ -34,6 +34,8 @@ library(iml)
 library(lime)
 library(pheatmap)
 library(treemapify)
+library(plotly)
+library(ranger)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -287,16 +289,27 @@ data_scaled = data_imp |>
   mutate(across(
     where(is.numeric),
     ~ as.numeric(scale(.x))
-  )) |> 
+  )) |>
   mutate(id = data$id)
 
 data_scaled <- data_scaled |> 
   na.omit() 
+
+str(data_scaled)
 ```
 
-# Unsupervised Learning
+```{r}
+set.seed(6)
 
-## 👎 PCA + Kmeans (tutte le variabili numeriche)
+split <- initial_split(data_scaled, prop = 0.8, strata = death)
+train <- training(split)
+test  <- testing(split)
+
+folds <- vfold_cv(train, v = 10, strata = death)
+```
+# Unsupervised Learning
+#----------------------------------------------------------------
+## ❌ PCA + Kmeans (tutte le variabili numeriche)
 
 ```{r, warning=FALSE, }
 num_data_scaled <- data_scaled |>
@@ -313,16 +326,6 @@ ggpairs(
   ),
   progress = FALSE   # <-- disattiva i messaggi di avanzamento
 )
-```
-
-```{r}
-set.seed(6)
-
-split <- initial_split(data_scaled, prop = 0.8, strata = death)
-train <- training(split)
-test  <- testing(split)
-
-folds <- vfold_cv(train, v = 10, strata = death)
 ```
 
 
@@ -377,7 +380,7 @@ p3d
 
 ```
 
-## 👎RKM (3 variabili)
+## ❌ RKM (3 variabili)
 
 ```{r}
 res_cluspca <- num_data_scaled |>
@@ -395,7 +398,7 @@ cat('\nsilhouette: ', mean_sil)
 
 ```
 
-## 👎 FKM (3 variabili)
+## ❌ FKM (3 variabili)
 
 ```{r}
 res_cluspca <- num_data_scaled |> 
@@ -414,7 +417,7 @@ cat('\nsilhouette: ', mean_sil)
 
 Sembra non ci siano variabili che 'causano rumore'
 
-## ✅Kmeans (3 variabili)
+## ❌Kmeans (3 variabili)
 
 Variabili che agiscono con maggiore intensità sulla prima componente, la quale sembra discriminare due gruppi Diagramma di dispersione tra: 1) frequenza cardiaca del paziente e pressione del sangue media del paziente (misurate al terzo giorno); 2) frequenza cardiaca del paziente e temperatura del paziente (misurate al terzo giorno); 3) pressione media del sangue del paziente e temperatura del paziente (misurate al terzo giorno);
 
@@ -461,7 +464,7 @@ p3d <- plotly::plot_ly(
 p3d
 ```
 
-## 👎✅GMM (3 variabili)
+## ❌GMM (3 variabili)
 
 ```{r}
 GMM = Mclust(num_data_scaled, G = 4, modelNames = "EII")
@@ -492,7 +495,7 @@ data_scaled |>
   })()
 ```
 
-## ✅MCA + Kmeans (tutte le variabili categoriche)
+## ❌MCA + Kmeans (tutte le variabili categoriche)
 
 mca con 4 componenti
 
@@ -558,7 +561,7 @@ xyplot(
 
 ```
 
-## ✅✅MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
+## ✅❌MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
 categorizzare le 3 numeriche e fare MCA globale 
 ```{r}
 num_vars <- data_scaled |> select(meanbp, hrt, temp)
@@ -593,8 +596,6 @@ categorical_vars_ext <- categorical_vars |>
 
 ```
 
-
-
 ```{r}
 #MCA
 res.mca_vars <- MCA(categorical_vars_ext, graph = FALSE)
@@ -612,27 +613,78 @@ fviz_cluster(res.mca_kmeans, data = coords_mca,
              main = "K-means + MCA")
 
 ```
-
-## -----FAMD
-
-Si riescono a distinguere due gruppi di pazienti:
-il primo gruppo (quello in alto) è associato alle malattie oncologiche, il secondo (quello più numeroso) è caratterizzato da pazienti da malattie cardiopolmonari.
+interpretation of results
 ```{r}
-set.seed(123)
-res_famd <- train |> 
-  select(-id) |> 
-  FAMD(ncp = 5, graph = TRUE)
+clustered_data <- categorical_vars_ext %>%
+  mutate(cluster = factor(res.mca_kmeans$cluster))
 
-# Scree plot per valutare quante dimensioni mantenere
+## 1. Dimensioni dei cluster
+cluster_sizes <- clustered_data %>%
+  count(cluster) %>%
+  mutate(prop = round(n / sum(n), 3))
+
+print(cluster_sizes)
+
+## 2. Frequenze relative per ogni variabile categoriale
+freq_rel <- function(var){
+  clustered_data %>%
+    count(cluster, !!sym(var)) %>%
+    group_by(cluster) %>%
+    mutate(prop = round(n/sum(n), 3)) %>%
+    arrange(cluster, desc(prop))
+}
+
+# Esempi
+freq_rel("meanbp_cat")
+freq_rel("hrt_cat")
+freq_rel("temp_cat")
+freq_rel("sex")     # se presente
+freq_rel("death")   # se presente
+
+## 3. Funzione per barplot con frequenze relative
+plot_cluster_var <- function(var){
+  clustered_data %>%
+    count(cluster, !!sym(var)) %>%
+    group_by(cluster) %>%
+    mutate(prop = n/sum(n)) %>%
+    ggplot(aes(x = cluster, y = prop, fill = !!sym(var))) +
+      geom_bar(stat = "identity", position = "dodge") +
+      labs(title = paste("Distribuzione relativa di", var, "nei cluster"),
+           y = "Frequenza relativa", x = "Cluster") +
+      theme_minimal()
+}
+plot_cluster_var("meanbp_cat")
+plot_cluster_var("hrt_cat")
+plot_cluster_var("temp_cat")
+```
+nei cluster non si riesce ad identificare un profilo paziente ben discriminato
+#---------WORKSPACE1---------------------
+
+## ✅✅FAMD
+FAMD permette di analizzare insieme variabili quantitative e qualitative, trovando pattern e gruppi in modo bilanciato e visivamente interpretabile
+Le variabili numeriche vengono trattate come in PCA (centrate e ridotte)
+Le variabili categoriali vengono trattate come in MCA (codifica disgiuntiva)
+Ogni variabile ha lo stesso peso, così numeriche e categoriali contribuiscono in modo equilibrato
+```{r,warning=FALSE}
+set.seed(6)
+train <- train|> 
+  select(-id) 
+
+res_famd <- FAMD(train, ncp = 5, graph = FALSE)
+res_famd$eig
 fviz_screeplot(res_famd)
+
+fviz_famd_var(res_famd, repel = TRUE, col.var = "#8FD4B8") +
+  labs(title = "Correlation circle (FAMD)")
+
 ```
 
 applicazione del kmeans con FAMD
 ```{r}
-coords_famd <- res_famd$ind$coord   # matrice n_individui x ncp
+coords_famd <- res_famd$ind$coord  
 
 fviz_nbclust(coords_famd, kmeans)
-set.seed(123)  # per riproducibilità
+set.seed(6)
 famd_km_res <- kmeans(coords_famd, centers = 2, nstart = 25)
 ```
 
@@ -656,9 +708,33 @@ ggplot(coords_famd, aes(x = Dim1, y = Dim2, color = factor(cluster))) +
        color = "Cluster") +
   theme_minimal()
 ```
+```{r}
+plot_ly(
+  data = coords_famd,
+  x = ~Dim1,
+  y = ~Dim2,
+  z = ~Dim3,
+  type = "scatter3d",
+  mode = "markers",
+  color = ~factor(cluster),
+  colors = "Set2",
+  marker = list(size = 3)
+) %>%
+  layout(
+    title = "3D Scatterplot FAMD-Kmeans",
+    scene = list(
+      xaxis = list(title = "Dim 1"),
+      yaxis = list(title = "Dim 2"),
+      zaxis = list(title = "Dim 3")
+    )
+  )
+
+```
 
 Applicazione del metodo sul test set
 ```{r}
+test <- test|> 
+  select(-id) 
 res_famd_test <- predict(res_famd, newdata = test)
 
 coords_test <- as.data.frame(res_famd_test$coord)
@@ -683,29 +759,41 @@ ggplot(coords_test, aes(x = Dim1 , y = Dim2 , color = factor(test$cluster))) +
   theme_minimal()
 ```
 
-Applicazione ranger cluster ~ tutte le variabili non usate nel cluster e stampa della feature importance
 ```{r}
-library(ranger)
+plot_ly(
+  data = coords_test,
+  x = ~Dim1,
+  y = ~Dim2,
+  z = ~Dim3,
+  type = "scatter3d",
+  mode = "markers",
+  color = ~factor(test$cluster),
+  colors = "Set2",
+  marker = list(size = 3)
+) %>%
+  layout(
+    title = "3D Scatterplot FAMD-Kmeans",
+    scene = list(
+      xaxis = list(title = "Dim 1"),
+      yaxis = list(title = "Dim 2"),
+      zaxis = list(title = "Dim 3")
+    )
+  )
 
-# 1. Left join su id
-joined <- support2_na_analysis %>%
-  inner_join(train %>% select(id), by = "id")
+```
+Applicazione ranger cluster ~ tutte le variabili e stampa della feature importance
+```{r}
+#joined <- support2_na_analysis %>% inner_join(train %>% select(id), by = "id")
+#common_cols <- intersect(colnames(support2_na_analysis), colnames(train))
+#support_vars <- setdiff(colnames(support2_na_analysis), common_cols)
+#joined$cluster = coords_famd$cluster
+#data_RF <- joined %>% select(all_of(support_vars), cluster) |> select(-c(sfdm2, surv2m, sps, surv6m))
+```
 
-# 2. Identificare le colonne comuni
-common_cols <- intersect(colnames(support2_na_analysis), colnames(train))
-
-# 3. Selezionare solo le variabili di support2_na_analysis non presenti in train
-support_vars <- setdiff(colnames(support2_na_analysis), common_cols)
-
-joined$cluster = coords_famd$cluster
-
-# 4. Costruire dataset finale con cluster come risposta
-data_RF <- joined %>%
-  select(all_of(support_vars), cluster) |> 
-  select(-c(sfdm2, surv2m, sps, surv6m))
-
-# 5. Random Forest
-set.seed(123)
+# Surrogate Model: Random Forest
+```{r}
+data_RF <- test
+set.seed(6)
 rf_model <- ranger(cluster ~ ., data = data_RF, mtry = 4, importance = "impurity_corrected")
 
 importance_df <- data.frame(
@@ -713,26 +801,79 @@ importance_df <- data.frame(
   importance = rf_model$variable.importance
 )
 
-# 2. Ordinare per importanza
-importance_df <- importance_df[order(importance_df$importance, decreasing = TRUE), ]
 
-# 3. Plot con ggplot2 (top 20 variabili)
+importance_df <- importance_df[order(importance_df$importance, decreasing = TRUE), ]
 ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = importance)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_bar(stat = "identity", fill = "#8FD4B8") +
   coord_flip() +
   labs(title = "Feature Importance",
        x = "Feature",
        y = "Importance") +
   theme_minimal()
+
 ```
 
-
-
-#Na evaluation FAMD
-
+## Patient Profile
 ```{r}
+
+df <- test %>% mutate(cluster = factor(cluster))
+
+vars <- c("ca","dzgroup","dzclass","aps","charges","hday","d.time","slos","death","num.co","hospdead")
+num_vars <- vars[sapply(df[vars], is.numeric)]
+cat_vars <- setdiff(vars, num_vars)
+
+# Boxplot numeriche in griglia 2 righe x 3 colonne
+plot_num <- df %>%
+  select(cluster, all_of(num_vars)) %>%
+  pivot_longer(-cluster, names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = cluster, y = value, fill = cluster)) +
+  geom_boxplot(outlier.size = 0.6, alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 3, nrow = 2) +
+  labs(title = "Boxplot variabili numeriche per cluster", x = "Cluster", y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+print(plot_num)
+
+# Stampa le categoriali una per una (frequenze relative per cluster)
+for(v in cat_vars){
+  p <- df %>%
+    select(cluster, !!sym(v)) %>%
+    rename(category = !!sym(v)) %>%
+    filter(!is.na(category)) %>%
+    group_by(cluster, category) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(cluster) %>%
+    mutate(prop = n / sum(n)) %>%
+    ggplot(aes(x = cluster, y = prop, fill = category)) +
+    geom_col(position = position_fill(), color = "black") +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(title = paste("Distribuzione di", v, "per cluster"),
+         x = "Cluster", y = "Proporzione", fill = v) +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  print(p)
+}
+```
+
+Si riescono a distinguere due gruppi di pazienti:
+il primo gruppo è associato alle malattie oncologiche, il secondo  è caratterizzato da pazienti con altre malattie
+
+#Na evaluation
+```{r}
+set.seed(6)
+
+split <- initial_split(data_scaled, prop = 0.8, strata = death)
+train <- training(split)
+test  <- testing(split)
+
+joined <- support2_na_analysis %>% inner_join(train %>% select(id), by = "id")
+common_cols <- intersect(colnames(support2_na_analysis), colnames(train))
+support_vars <- setdiff(colnames(support2_na_analysis), common_cols)
+joined$cluster = coords_famd$cluster
+data_NA <- joined %>% select(all_of(support_vars), cluster) |> select(-c(sfdm2, surv2m, sps, surv6m))
 # --- Step 1: Percentuali di NA per variabile e cluster ---
-na_summary <- data_RF %>%
+na_summary <- data_NA %>%
   group_by(cluster) %>%
   summarise(across(everything(), ~ mean(is.na(.)) * 100))
 
@@ -744,162 +885,9 @@ pheatmap(mat,
          cluster_rows = FALSE,
          cluster_cols = FALSE,
          main = "NA percentage by cluster")
-```
-
-
 
 ```
-
-
-## Evaluate Results
-variabili più influenti di ogni dimensione fattoriale MCA
-```{r}
-# Descrizione delle dimensioni MCA
-dim_desc <- dimdesc(res.mca_vars, axes = 1:3)
-
-# Variabili più influenti per Dim1
-dim_desc[[1]]$quali
-
-# Variabili più influenti per Dim2
-dim_desc[[2]]$quali
-
-# Variabili più influenti per Dim3
-dim_desc[[3]]$quali
-```
-
-### -----Surrogate Model
-
-modello supervisionato, mettere variabili che non hanno partecipato al cluster
-
-```{r}
-sur_mod_dataframe <- data.frame(
-  cluster = res.mca_kmeans$cluster,
-  income = categorical_vars$income,
-  slos = data_scaled$slos,
-  sod = data_scaled$sod,
-  n_comorbidity = data_scaled$num.co,
-  charges = data_scaled$charges, 
-  wblc = data_scaled$wblc,
-  age = data_scaled$age,
-  d.time = data_scaled$d.time,
-  resp = data_scaled$resp,
-  crea = data_scaled$crea
-)
-
-surrogate_model <- rpart(
-  cluster ~ .,
-  data = sur_mod_dataframe,
-  method = "class",
-  control = rpart.control(
-    minsplit = 250,   # più basso → più scissioni
-    cp = 0.01,       # meno penalizzazione → più variabili entrano
-    maxdepth = 30    # albero più profondo
-  )
-)
-
-fancyRpartPlot(surrogate_model)
-```
-
-### NA Evaluation
-
-valutare variabili con missing dopo il clustering
-
-```{r}
-categorical_vars_with_id = categorical_vars_ext |> 
-  mutate(id = data_scaled$id)
-
-data_joined <- support2_na_analysis %>%
-  mutate(id = data$id) |> 
-  dplyr::semi_join(categorical_vars_with_id, by = "id") |> 
-  mutate(cluster = res.mca_kmeans$cluster)
-```
-
-
-
-```{r}
-vars_with_missing10 <- data_joined %>%
-  summarise(across(everything(), ~ mean(is.na(.))*100)) %>%
-  pivot_longer(cols = everything(), names_to = "variable", values_to = "pct_missing") %>%
-  filter(pct_missing >= 10) %>%
-  pull(variable)
-
-# Dataset filtrato con cluster + variabili selezionate
-data_missing10 <- data_joined %>%
-  select(cluster, all_of(vars_with_missing10))
-
-# Analisi dei mancanti per cluster (percentuali)
-missing_by_cluster <- data_missing10 %>%
-  group_by(cluster) %>%
-  summarise(across(everything(), ~ sum(is.na(.)), .names = "na_{col}")) %>%
-  pivot_longer(-cluster, names_to = "variable", values_to = "na_count")
-
-
-# Calcola il totale di NA per variabile (su tutti i cluster)
-total_missing <- missing_by_cluster %>%
-  group_by(variable) %>%
-  summarise(total_na = sum(na_count))
-
-# Calcola la percentuale di NA di ciascun cluster rispetto al totale della variabile
-missing_pct_by_cluster <- missing_by_cluster %>%
-  left_join(total_missing, by = "variable") %>%
-  mutate(pct_missing_cluster = (na_count / total_na) * 100)
-
-# Barplot stacked: distribuzione % dei NA per variabile
-p1 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = pct_missing_cluster, fill = factor(cluster))) +
-  geom_bar(stat = "identity", position = "stack") +
-  coord_flip() +
-  labs(title = "Distribuzione percentuale dei missing per variabile nei cluster",
-       x = "Variabile", y = "% dei missing (per cluster)", fill = "Cluster")
-
-# Heatmap: percentuale di missing per variabile × cluster
-p2 <- ggplot(missing_pct_by_cluster, aes(x = variable, y = factor(cluster), fill = pct_missing_cluster)) +
-  geom_tile(color = "white") +
-  scale_fill_gradient(low = "white", high = "red") +
-  labs(title = "Percentuale dei missing per variabile e cluster",
-       x = "Variabile", y = "Cluster", fill = "% dei missing") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-# 5. Visualizza entrambi i grafici
-p1
-p2
-```
-da questi risultati emerge che i NA cadono molto nel cluster 1: potrebbero non essere random
-
-ipotetico profilo paziente per i NA in questione
-```{r}
-data_missing10 = data_missing10 |> 
-  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
-
-data_joined = data_joined |> 
-  mutate(cluster3 = as.integer(ifelse(cluster == 3, 1, 0)))
-```
-
-variabili con molti NA nello stesso cluster: num.co, charges
-
-```{r}
-data_long <- data_joined %>%
-  select(cluster3, num.co, charges, sps, aps) %>%
-  pivot_longer(cols = c(num.co, charges),
-               names_to = "variabile",
-               values_to = "valore")
-
-# Boxplot per ciascuna variabile divisa per cluster1
-ggplot(data_long, aes(x = factor(cluster3), y = valore, fill = factor(cluster3))) +
-  geom_boxplot(outlier.alpha = 0.3) +
-  facet_wrap(~ variabile, scales = "free_y") +
-  labs(x = "Clusterw", y = "Value", 
-       title = "Cluster w analysis") +
-  theme_minimal() +
-  theme(legend.position = "none",
-        strip.text = element_text(face = "bold"))
-```
-### -----Profile for each cluster
-
-```{r}
-
-```
-
-
+Sembra che i NA siano missing at random
 # IODICE
 
 # Supervised Learning
@@ -969,12 +957,6 @@ chi_results <- map_df(
 chi_results |> arrange(p_value)
 ```
 
-## -------Feature Selection
-
-```{r}
-
-```
-
 ## Feature scaling
 ```{r}
 tot_data_scaled = tot_data |> 
@@ -992,9 +974,7 @@ train_svm = train |>
   select(-id)
 
 test_svm = test |> 
-  select(-id, cluster)
-
-
+  select(-id)
 ```
 
 
@@ -1150,7 +1130,7 @@ bind_rows(svm_roc, log_reg_roc) %>%
 
 ```
 
-
+#------------WORKSPACE2---------
 ## -------Interpretability
 
 ```{r}
