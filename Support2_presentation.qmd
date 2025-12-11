@@ -40,6 +40,7 @@ library(tidyr)
 library(purrr)
 library(rattle)
 library(iml)
+library(kableExtra)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -431,7 +432,7 @@ pheatmap(mat,
 ```
 
 #---------------------------------
-# 4) Supervised Model: SVM
+# 4) Supervised Model: LR vs SVM
 
 ```{r,echo=FALSE,include=FALSE}
 tot_data = data_imp
@@ -511,15 +512,17 @@ svm_grid <- tibble(
 )
 
 # Step 1: gridsearch
-#svm_grid_res <- tune_grid(svm_wf, resamples = folds, grid = svm_grid, metrics = metric_set(roc_auc))
+#svm_grid_res <- tune_grid(svm_wf, resamples = folds, grid = svm_grid, metrics = metric_set(recall))
 
 # Step 2: bayesian tuning
-#svm_bayes <- tune_bayes(svm_wf, resamples = folds, metrics = metric_set(roc_auc), initial = svm_grid_res, iter = 3, control = control_bayes(verbose = TRUE))
+#svm_bayes <- tune_bayes(svm_wf, resamples = folds, metrics = metric_set(recall), initial = svm_grid_res, iter = 3, control = control_bayes(verbose = TRUE))
 
 # Best params
 best_params <- tibble::tibble(cost = 1, rbf_sigma = 0.01)
 
 final_svm <- finalize_workflow(svm_wf, best_params)
+
+best_params
 ```
 
 - Results
@@ -530,13 +533,141 @@ final_svm <- finalize_workflow(svm_wf, best_params)
 
 svm_final_fit <- last_fit(final_svm, split)
 
-collect_metrics(svm_final_fit)
+preds_svm <- svm_final_fit %>% collect_predictions()
 
-svm_final_fit |> 
-  collect_predictions() |> 
-  conf_mat(truth = death, estimate = .pred_class)
+ms_svm <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
+
+ms_svm(preds, truth = death, estimate = .pred_class, event_level = "second")
+
+#svm_final_fit |> collect_predictions() |> conf_mat(truth = death, estimate = .pred_class)
 ```
 :::
+
+
+## LR Model
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# logistic regression penalized
+log_reg_spec <- logistic_reg(
+  mode = "classification",
+  penalty = tune(),     
+  mixture = 1             # 1 = LASSO, 0 = Ridge 
+) |>
+  set_engine("glmnet")
+
+# Workflow
+log_reg_wf <- workflow() |>
+  add_model(log_reg_spec) |>
+  add_recipe(rec)   
+
+# tuning
+log_reg_grid <- tibble(
+  penalty = c(0.001, 0.01, 0.1, 1)
+)
+
+#log_reg_grid_res <- tune_grid(log_reg_wf, resamples = folds, grid = log_reg_grid, metrics = metric_set(recall), control = control_grid(save_pred = TRUE))
+
+#log_reg_bayes <- tune_bayes(log_reg_wf, resamples = folds, metrics = metric_set(recall), initial = log_reg_grid_res, iter = 3, control = control_bayes(verbose = TRUE, save_pred = TRUE))
+
+
+best_params_lr <- tibble::tibble(penalty = 0.01)
+final_lr <- finalize_workflow(log_reg_wf, best_params_lr)
+
+lr_final_fit <- last_fit(final_lr, split)
+
+#lr_final_fit |>collect_predictions() |> conf_mat(truth = death, estimate = .pred_class)
+
+preds_lr <- lr_final_fit %>% collect_predictions()
+
+ms_lr <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
+
+ms_lr(preds_lr, truth = death, estimate = .pred_class, event_level = "second")
+
+```
+## SVM vs LR: ROC curve
+```{r,warning=FALSE,include=FALSE}
+metrics_svm <- ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "SVM")
+metrics_lr  <- ms_lr(preds_lr,  truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "LR")
+
+combined <- bind_rows(metrics_svm, metrics_lr) %>%
+  select(model, .metric, .estimate) %>%
+  pivot_wider(names_from = model, values_from = .estimate)
+```
+```{r}
+#| echo: true
+#| code-fold: false
+svm_test_preds <- collect_predictions(svm_final_fit)
+lr_test_preds  <- collect_predictions(lr_final_fit)
+
+# Calcola ROC separatamente e aggiungi la colonna 'model'
+svm_roc <- svm_test_preds %>%
+  roc_curve(truth = death, .pred_0) %>%
+  mutate(model = "SVM")
+
+log_reg_roc <- lr_test_preds %>%
+  roc_curve(truth = death, .pred_0) %>%
+  mutate(model = "Logistic Regression")
+
+# Confronto ROC
+bind_rows(svm_roc, log_reg_roc) %>%
+  autoplot() +
+  aes(color = model) +
+  labs(title = "Test ROC Curve: SVM vs Logistic Regression")
+
+```
+## SVM vs LR: Confusion matrix and metrics
+```{r}
+#| echo: true
+#| code-fold: false
+
+p_svm <- autoplot(
+  preds_svm %>% conf_mat(truth = death, estimate = .pred_class),
+  type = "heatmap"
+) +
+  scale_fill_gradient(low = "#ccece6", high = "#006d2c") +
+  ggtitle("Confusion Matrix – SVM") +
+  theme_minimal(base_size = 14)
+
+#--- Confusion Matrix LR ---
+p_lr <- autoplot(
+  preds_lr %>% conf_mat(truth = death, estimate = .pred_class),
+  type = "heatmap"
+) +
+  scale_fill_gradient(low = "#c6dbef", high = "#08519c") +
+  ggtitle("Confusion Matrix – Logistic Regression") +
+  theme_minimal(base_size = 14)
+
+# metrics
+tbl <- combined %>%
+  rename(
+    Metric = .metric,
+    SVM = SVM,
+    `Logistic Regression` = LR
+  ) %>%
+  kable(format = "html", digits = 3,
+        caption = "Confronto tra metriche SVM vs LR") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, background = "#f7f7f7")
+
+
+p_svm | p_lr
+
+combined %>%
+  rename(
+    Metric = .metric,
+    SVM = SVM,
+    `Logistic Regression` = LR
+  ) %>%
+  kable("html", digits = 3, caption = "SVM vs LR") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(1, bold = TRUE)
+```
 
 # Model interpretability
 

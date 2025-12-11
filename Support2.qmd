@@ -36,6 +36,7 @@ library(pheatmap)
 library(treemapify)
 library(plotly)
 library(ranger)
+library(yardstick)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -299,7 +300,7 @@ str(data_scaled)
 ```
 
 ```{r}
-set.seed(6)
+set.seed(46)
 
 split <- initial_split(data_scaled, prop = 0.8, strata = death)
 train <- training(split)
@@ -658,7 +659,7 @@ plot_cluster_var("hrt_cat")
 plot_cluster_var("temp_cat")
 ```
 nei cluster non si riesce ad identificare un profilo paziente ben discriminato
-#---------WORKSPACE1---------------------
+#---------WORKSPACE1---------------
 
 ## ✅✅FAMD
 FAMD permette di analizzare insieme variabili quantitative e qualitative, trovando pattern e gruppi in modo bilanciato e visivamente interpretabile
@@ -684,6 +685,9 @@ applicazione del kmeans con FAMD
 coords_famd <- res_famd$ind$coord  
 
 fviz_nbclust(coords_famd, kmeans)
+```
+
+```{r}
 set.seed(6)
 famd_km_res <- kmeans(coords_famd, centers = 2, nstart = 25)
 ```
@@ -1012,7 +1016,7 @@ svm_grid_res <- tune_grid(
   svm_wf,
   resamples = folds,
   grid = svm_grid,
-  metrics = metric_set(roc_auc),
+  metrics = metric_set(recall),
   control = control_grid(save_pred = TRUE)
 )
 
@@ -1020,14 +1024,14 @@ svm_grid_res <- tune_grid(
 svm_bayes <- tune_bayes(
   svm_wf,
   resamples = folds,
-  metrics = metric_set(roc_auc),
+  metrics = metric_set(recall),
   initial = svm_grid_res,             
   iter = 3,
   control = control_bayes(verbose = TRUE, save_pred = TRUE)
 )
 
 # Migliori parametri
-best_params <- select_best(svm_bayes, metric = "roc_auc")
+best_params <- select_best(svm_bayes, metric = "recall")
 final_svm <- finalize_workflow(svm_wf, best_params)
 ```
 
@@ -1036,11 +1040,18 @@ best model
 ```{r}
 svm_final_fit <- last_fit(final_svm, split)
 
-collect_metrics(svm_final_fit)
-
 svm_final_fit |> 
   collect_predictions() |> 
   conf_mat(truth = death, estimate = .pred_class)
+
+
+preds <- svm_final_fit %>% collect_predictions()
+
+ms <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
+
+ms(preds, truth = death, estimate = .pred_class, event_level = "second")
+
+
 ```
 
 
@@ -1130,8 +1141,8 @@ bind_rows(svm_roc, log_reg_roc) %>%
 
 ```
 
-#------------WORKSPACE2---------
-## -------Interpretability
+#---------WORKSPACE2---------
+## Interpretability
 
 ```{r}
 library(iml)
@@ -1139,7 +1150,7 @@ library(iml)
 dplyr::glimpse(train)
 ```
 
-
+svm
 ```{r}
 svm_fit_model <- svm_final_fit %>% extract_fit_parsnip() %>% pluck("fit")
 
@@ -1159,9 +1170,84 @@ svm_pred <- Predictor$new(
 )
 ```
 
+lr
+```{r}
+lr_fitted <- fit(final_lr, data = train)
 
-## PDP/ALE
+lr_fit_model <- lr_fitted %>% extract_fit_parsnip()
 
+coef_mat <- as.matrix(coef(lr_fit_model$fit, s = best_params_lr$penalty))
+
+coef_table <- tibble(
+  feature = rownames(coef_mat),
+  coefficient = coef_mat[,1]
+) %>% 
+  filter(feature != "(Intercept)") %>%
+  mutate(abs_coeff = abs(coefficient)) %>%
+  arrange(desc(abs_coeff))
+
+train_baked <- bake(prep(rec, training = train), new_data = train)
+
+# Funzione di predizione che restituisce la probabilità della classe positiva
+lr_predict_fun <- function(model, newdata) {
+  as.numeric(predict(model, newx = as.matrix(newdata), type = "response"))
+}
+
+# Creazione dell'oggetto Predictor
+lr_pred <- Predictor$new(
+  model = lr_fit_model$fit,
+  data  = train_baked %>% select(-death),
+  y     = train_baked$death,
+  predict.function = lr_predict_fun
+)
+
+```
+## Feature Importance
+svm
+```{r}
+svm_imp <- FeatureImp$new(
+  svm_pred,
+  loss = "ce",          # cross-entropy per classificazione
+  compare = "difference"
+)
+
+svm_imp_df <- svm_imp$results %>%
+  arrange(desc(importance))
+
+ggplot(svm_imp_df, aes(x = reorder(feature, importance), y = importance)) +
+  geom_col(fill = "#F07F28") +
+  coord_flip() +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Permutation Feature Importance – SVM (RBF)",
+    x = "Feature",
+    y = "Importance (loss increase)"
+  )
+```
+lr
+```{r}
+ggplot(coef_table, aes(x = reorder(feature, abs_coeff), y = abs_coeff)) +
+  geom_col(fill = "#20B2AA") +
+  coord_flip() +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Feature Importance – Logistic Regression",
+    x = "Feature",
+    y = "|Coefficient|"
+  )
+
+```
+
+```{r}
+p_lr + p_svm +
+  plot_annotation(
+    title = "Confronto Feature Importance: Logistic Regression vs SVM",
+    theme = theme(plot.title = element_text(size = 18, face = "bold"))
+  )
+```
+
+## ---PDP/ALE
+svm
 ```{r}
 # PDP su una variabile (es. "age")
 pdp_age <- FeatureEffect$new(
@@ -1175,15 +1261,47 @@ pdp_age <- FeatureEffect$new(
 pdp_age$plot() + theme_minimal()
 ```
 
-## SHAP
+lr
+```{r}
+pdp_meanbp <- FeatureEffect$new(
+  lr_pred,
+  feature = "meanbp",
+  method = "pdp",
+  grid.size = 20
+)
+
+# Plot PDP
+pdp_meanbp$plot() +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Partial Dependence Plot – Logistic Regression",
+    y = "Predicted probability",
+    x = "meanbp"
+  )
+```
+
+## ---SHAP
 
 visualise observations classification on test set
+
+svm
 ```{r}
-# Predizioni sul test set
-preds <- collect_predictions(svm_final_fit)
+# Probabilità predette classe positiva
+svm_pred_probs <- predict(svm_fit_model, train_baked %>% select(-death), type = "probabilities")[,2]
+
+# Predizione classi (0/1) usando soglia 0.5
+svm_pred_class <- ifelse(svm_pred_probs >= 0.5, 1, 0)
+
+# Creiamo il data frame con predizioni
+preds_svm <- train_baked %>%
+  mutate(
+    .pred_prob = svm_pred_probs,
+    .pred_class = factor(svm_pred_class, levels = c(0,1)),
+    death = factor(death, levels = c(0,1))
+  )
 
 # Aggiungi colonna case_type
-preds <- preds %>%
+preds_svm <- preds_svm %>%
   mutate(
     case_type = case_when(
       death == 1 & .pred_class == 1 ~ "TP",
@@ -1193,19 +1311,74 @@ preds <- preds %>%
     )
   )
 
-# Ottieni gli indici (.row) per ciascun gruppo
-tp_index <- preds %>% filter(case_type == "TP") %>% pull(.row)
-tn_index <- preds %>% filter(case_type == "TN") %>% pull(.row)
-fp_index <- preds %>% filter(case_type == "FP") %>% pull(.row)
-fn_index <- preds %>% filter(case_type == "FN") %>% pull(.row)
+# Crea un indice esplicito
+preds_svm <- preds_svm %>%
+  mutate(row_index = 1:n())
+
+# Ottieni gli indici per ciascun gruppo
+tp_index <- preds_svm %>% filter(case_type == "TP") %>% pull(row_index)
+tn_index <- preds_svm %>% filter(case_type == "TN") %>% pull(row_index)
+fp_index <- preds_svm %>% filter(case_type == "FP") %>% pull(row_index)
+fn_index <- preds_svm %>% filter(case_type == "FN") %>% pull(row_index)
 
 # Visualizza
-cat("TP: ",tp_index)
-cat("\n\nTN: ",tn_index)
-cat("\n\nFP: ",fp_index)
-cat("\n\nFN: ",fn_index)
+cat("TP: ", tp_index)
+cat("\nTN: ", tn_index)
+cat("\nFP: ", fp_index)
+cat("\nFN: ", fn_index)
+
 ```
 
+lr
+```{r}
+
+# Probabilità predette classe positiva (estrai lambda corretto)
+pred_probs <- predict(
+  lr_fit_model$fit, 
+  newx = as.matrix(train_baked %>% select(-death)), 
+  type = "response", 
+  s = best_params_lr$penalty   # <- IMPORTANTE, seleziona il lambda scelto dal tuning
+)
+
+# pred_probs ora è una matrice n_righe x 1 → convertiamo in vettore
+pred_probs <- as.numeric(pred_probs)
+
+# Predizione classi (0/1) usando soglia 0.5
+pred_class <- ifelse(pred_probs >= 0.5, 1, 0)
+
+# Data frame con predizioni
+preds_lr <- train_baked %>%
+  mutate(
+    .pred_prob = pred_probs,
+    .pred_class = factor(pred_class, levels = c(0,1)),
+    death = factor(death, levels = c(0,1))
+  )
+
+# Case type TP/TN/FP/FN
+preds_lr <- preds_lr %>%
+  mutate(
+    case_type = case_when(
+      death == 1 & .pred_class == 1 ~ "TP",
+      death == 0 & .pred_class == 0 ~ "TN",
+      death == 0 & .pred_class == 1 ~ "FP",
+      death == 1 & .pred_class == 0 ~ "FN"
+    )
+  )
+
+# Indici osservazioni per ciascun gruppo
+tp_index <- which(preds_lr$case_type == "TP")
+tn_index <- which(preds_lr$case_type == "TN")
+fp_index <- which(preds_lr$case_type == "FP")
+fn_index <- which(preds_lr$case_type == "FN")
+
+cat("TP: ", tp_index)
+cat("\nTN: ", tn_index)
+cat("\nFP: ", fp_index)
+cat("\nFN: ", fn_index)
+
+```
+
+svm
 ```{r}
 library(ggplot2)
 
@@ -1238,44 +1411,93 @@ ggplot(shap_all_df, aes(x = feature, y = phi, fill = phi > 0)) +
   facet_wrap(~ obs_id, ncol = 2)
 
 ```
-## LIME
 
+lr
 ```{r}
-# Funzioni necessarie per lime con ksvm
-model_type.ksvm <- function(x, ...) "classification"
-predict_model.ksvm <- function(x, newdata, ...) {
-  as.data.frame(predict(x, newdata = newdata, type = "probabilities"))
-}
+# Seleziona alcune osservazioni dal train (ad esempio 2 TP, 2 FP, 1 FN)
+obs_index <- c(tp_index[1:2], fp_index[1:2], fn_index[1])
 
-# Explainer sui dati baked (senza target)
-explainer <- lime(
-  x = train_baked %>% select(-death),
-  model = svm_fit_model,
-  bin_continuous = TRUE
-)
+# Calcolo Shapley values
+shap_all_lr <- lapply(obs_index, function(i) {
+  x_test <- train_baked[i, -which(names(train_baked)=="death"), drop = FALSE]
+  shap <- Shapley$new(lr_pred, x.interest = x_test)
+  df <- shap$results
+  df$obs_id <- i
+  df
+})
 
-# Osservazioni da analizzare
-obs_index <- c(12, 134)
-cases <- train_baked %>% select(-death) %>% slice(obs_index)
+# Unisci in un unico data frame
+shap_all_df_lr <- do.call(rbind, shap_all_lr)
 
-# Spiegazioni locali
-set.seed(6)
-explanations <- explain(
-  x = cases,
-  explainer = explainer,
-  n_features = 6,
-  n_permutations = 5000,
-  kernel_width = 0.75,
-  labels = levels(train_baked$death)[2]   # classe positiva
-)
-
-# Grafico
-plot_features(explanations) +
+# Grafico SHAP
+ggplot(shap_all_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_manual(values = c("TRUE" = "#20B2AA", "FALSE" = "#F07F28")) +
   theme_minimal(base_size = 14) +
-  labs(title = "LIME explanations")
+  labs(
+    title = "Shapley values – Logistic Regression",
+    x = "Features",
+    y = "Contribution (phi)"
+  ) +
+  facet_wrap(~ obs_id, ncol = 2)
 
 ```
 
+## ---LIME
+svm
+```{r}
+library(lime)
+
+# 1. Creo l'oggetto explainer
+# Nota: la funzione lime richiede dati "raw" senza la colonna target
+explainer_svm <- lime(
+  x = train_baked %>% select(-death),  # dati senza target
+  model = svm_fit_model,
+  bin_continuous = TRUE  # opzionale, discretizza le variabili continue per LIME
+)
+
+# 2. Seleziono alcune osservazioni da spiegare
+# Puoi usare gli indici già definiti prima (es: TP, FP, FN)
+obs_to_explain <- train_baked[c(tp_index[1], fp_index[1], fn_index[1]), -which(names(train_baked) == "death")]
+
+# 3. Genero le spiegazioni LIME
+lime_results <- explain(
+  x = obs_to_explain,
+  explainer = explainer_svm,
+  n_features = 5,        # numero di feature da mostrare
+  n_labels = 1           # classi da spiegare (nel tuo caso positiva = 1)
+)
+
+# 4. Visualizzo i risultati
+plot_features(lime_results) +
+  labs(
+    title = "LIME Explanation – SVM",
+    x = "Feature contribution",
+    y = "Observation"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+```
+
+```{r}
+
+
+```
+
+svm
+```{r}
+
+
+
+```
+
+lr
+```{r}
+
+
+```
 
 
 # EXTRA 2: Unsupervised Learning
