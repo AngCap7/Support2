@@ -40,7 +40,13 @@ library(tidyr)
 library(purrr)
 library(rattle)
 library(iml)
-library(kableExtra)
+library(lime)
+library(pheatmap)
+library(treemapify)
+library(plotly)
+library(ranger)
+library(yardstick)
+library(tibble)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -52,12 +58,11 @@ data = support2
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
 colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
 
-data = data |>
-  mutate(
+data <- data |>
+  dplyr::mutate(
     across(c(where(is.character), death, hospdead, 
-                  diabetes, income, dementia), ~ factor(.x))
-  ) |> 
-  select(-c(id, scoma, sps, surv2m, surv6m, sfdm2))
+                  diabetes, income, dementia), ~ factor(.x))) |> 
+  dplyr::select(-c(id, scoma, sps, surv2m, surv6m, sfdm2))
 ```
 
 # 1) Dataset
@@ -122,7 +127,7 @@ missing_summary <- tibble(
   n_na      = colSums(is.na(data)),
   perc_na   = colMeans(is.na(data)) * 100
 ) |>
-  filter(n_na > 0) |>         
+  dplyr::filter(n_na > 0) |>         
   arrange(desc(perc_na))
 
 ggplot(missing_summary, aes(x = reorder(variabile, perc_na), y = perc_na)) +
@@ -174,8 +179,8 @@ plot(hc, main = "Hierarchical Clustering")
 #| code-fold: true
 #| code-summary: "code"
 data %>%
-  select(where(is.factor)) %>%
-  pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
+  dplyr::select(where(is.factor)) %>%
+  tidyr::pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
   ggplot(aes(x = valore, y = ..prop.., group = 1, fill = valor)) +
   geom_bar(fill = "#8FD4B8") +
   facet_wrap(~ variabile, scales = "free") +
@@ -195,7 +200,7 @@ data %>%
 -Remove features with more than 30% NA: bun, urine, glucose, adlp
 
 ```{r}
-data <- data |> select(-c(
+data <- data |> dplyr::select(-c(
   adlp, urine, glucose, bun, totmcst, alb, adls, bili, pafi, ph,
   prg2m, edu, prg6m, totcst))
 ```
@@ -204,7 +209,7 @@ data <- data |> select(-c(
 
 ```{r}
 data <- data |> 
-  select(-c(avtisst, dnrday))
+  dplyr::select(-c(avtisst, dnrday))
 # adls adlp
 # totmcst totcst charges
 # aps avtisst
@@ -213,24 +218,26 @@ data <- data |>
 
 -Imputation for other features: income, wblc, charges, crea, race, dnr
 ```{r}
-#| echo: true
+#| echo: false
 #| code-fold: true
 #| code-summary: "code"
 #| 
 data <- data |>
-  mutate(income = fct_explicit_na(income, na_level = "nd"))
+  dplyr::mutate(income = fct_explicit_na(income, na_level = "nd"))
 
 library(VIM)
 set.seed(6)
-data_imp <- kNN(data, variable = c("wblc","charges","crea","race","dnr"), k = 5)
+data_imp <- VIM::kNN(data, variable = c("wblc","charges","crea","race","dnr"), k = 5)
 data_imp <- data_imp |> 
-  select(-c(wblc_imp, charges_imp, crea_imp, race_imp, dnr_imp))
+  dplyr::select(-c(wblc_imp, charges_imp, crea_imp, race_imp, dnr_imp, income, race))
+
+#income,race
 ```
 :::
 
 ```{r,echo=FALSE,include=FALSE}
 data_scaled = data |> 
-  mutate(across(
+  dplyr::mutate(across(
     where(is.numeric),
     ~ as.numeric(scale(.x))
   ))
@@ -259,7 +266,7 @@ folds <- vfold_cv(train, v = 10, strata = death)
 
 set.seed(6)
 train <- train|> 
-  select(-id) 
+  dplyr::select(-id) 
 
 res_famd <- FAMD(train, ncp = 5, graph = FALSE)
 
@@ -483,14 +490,15 @@ folds <- vfold_cv(train, v = 10, strata = death)
 #| code-fold: true
 #| code-summary: "code"
 
-svm_rec <- recipe(death ~ ., data = train) |>                     # 
-  step_dummy(all_nominal_predictors())           # dummy encodin                            
-svm_spec <- svm_rbf(
+svm_rec <- recipe(death ~ ., data = train) |>                     
+  step_dummy(all_nominal_predictors())  
+
+svm_spec <- svm_linear(
   mode = "classification",
-  cost = tune(),            # penalty sugli errori
-  rbf_sigma = tune()        # parametro kernel RBF
+  cost = tune(),            
+  #rbf_sigma = tune()      
 ) |> 
-  set_engine("kernlab")
+  set_engine("kernlab", kernel = "vanilladot")
 
 # Workflow
 svm_wf <- workflow() |>
@@ -518,11 +526,11 @@ svm_grid <- tibble(
 #svm_bayes <- tune_bayes(svm_wf, resamples = folds, metrics = metric_set(recall), initial = svm_grid_res, iter = 3, control = control_bayes(verbose = TRUE))
 
 # Best params
-best_params <- tibble::tibble(cost = 1, rbf_sigma = 0.01)
+#best_params_svm <- tibble::tibble(cost = 1, rbf_sigma = 0.01) #auc
+best_params_svm <- tibble::tibble(cost = 3.37)#, rbf_sigma = 0.00857) #recall
+final_svm <- finalize_workflow(svm_wf, best_params_svm)
 
-final_svm <- finalize_workflow(svm_wf, best_params)
-
-best_params
+best_params_svm
 ```
 
 - Results
@@ -537,7 +545,7 @@ preds_svm <- svm_final_fit %>% collect_predictions()
 
 ms_svm <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
 
-ms_svm(preds, truth = death, estimate = .pred_class, event_level = "second")
+ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second")
 
 #svm_final_fit |> collect_predictions() |> conf_mat(truth = death, estimate = .pred_class)
 ```
@@ -550,6 +558,10 @@ ms_svm(preds, truth = death, estimate = .pred_class, event_level = "second")
 #| code-fold: true
 #| code-summary: "code"
 
+# recipe
+log_reg_rec <- recipe(death ~ ., data = train) |>                     
+  step_dummy(all_nominal_predictors())  
+
 # logistic regression penalized
 log_reg_spec <- logistic_reg(
   mode = "classification",
@@ -561,7 +573,7 @@ log_reg_spec <- logistic_reg(
 # Workflow
 log_reg_wf <- workflow() |>
   add_model(log_reg_spec) |>
-  add_recipe(rec)   
+  add_recipe(log_reg_rec)   
 
 # tuning
 log_reg_grid <- tibble(
@@ -573,7 +585,8 @@ log_reg_grid <- tibble(
 #log_reg_bayes <- tune_bayes(log_reg_wf, resamples = folds, metrics = metric_set(recall), initial = log_reg_grid_res, iter = 3, control = control_bayes(verbose = TRUE, save_pred = TRUE))
 
 
-best_params_lr <- tibble::tibble(penalty = 0.01)
+#best_params_lr <- tibble::tibble(penalty = 0.01) #auc
+best_params_lr <- tibble::tibble(penalty = 0.001) #recall
 final_lr <- finalize_workflow(log_reg_wf, best_params_lr)
 
 lr_final_fit <- last_fit(final_lr, split)
@@ -592,17 +605,17 @@ ms_lr(preds_lr, truth = death, estimate = .pred_class, event_level = "second")
 metrics_svm <- ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "SVM")
 metrics_lr  <- ms_lr(preds_lr,  truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "LR")
 
-combined <- bind_rows(metrics_svm, metrics_lr) %>%
-  select(model, .metric, .estimate) %>%
+combined <- dplyr::bind_rows(metrics_svm, metrics_lr) %>%
+  dplyr::select(model, .metric, .estimate) %>%
   pivot_wider(names_from = model, values_from = .estimate)
 ```
+
 ```{r}
 #| echo: true
 #| code-fold: false
 svm_test_preds <- collect_predictions(svm_final_fit)
 lr_test_preds  <- collect_predictions(lr_final_fit)
 
-# Calcola ROC separatamente e aggiungi la colonna 'model'
 svm_roc <- svm_test_preds %>%
   roc_curve(truth = death, .pred_0) %>%
   mutate(model = "SVM")
@@ -611,7 +624,6 @@ log_reg_roc <- lr_test_preds %>%
   roc_curve(truth = death, .pred_0) %>%
   mutate(model = "Logistic Regression")
 
-# Confronto ROC
 bind_rows(svm_roc, log_reg_roc) %>%
   autoplot() +
   aes(color = model) +
@@ -623,6 +635,7 @@ bind_rows(svm_roc, log_reg_roc) %>%
 #| echo: true
 #| code-fold: false
 
+#confusion matrix
 p_svm <- autoplot(
   preds_svm %>% conf_mat(truth = death, estimate = .pred_class),
   type = "heatmap"
@@ -631,7 +644,6 @@ p_svm <- autoplot(
   ggtitle("Confusion Matrix – SVM") +
   theme_minimal(base_size = 14)
 
-#--- Confusion Matrix LR ---
 p_lr <- autoplot(
   preds_lr %>% conf_mat(truth = death, estimate = .pred_class),
   type = "heatmap"
@@ -642,7 +654,7 @@ p_lr <- autoplot(
 
 # metrics
 tbl <- combined %>%
-  rename(
+  dplyr::rename(
     Metric = .metric,
     SVM = SVM,
     `Logistic Regression` = LR
@@ -658,7 +670,7 @@ tbl <- combined %>%
 p_svm | p_lr
 
 combined %>%
-  rename(
+  dplyr::rename(
     Metric = .metric,
     SVM = SVM,
     `Logistic Regression` = LR
@@ -668,14 +680,251 @@ combined %>%
                 bootstrap_options = c("striped", "hover", "condensed")) %>%
   column_spec(1, bold = TRUE)
 ```
+with very similar results, it is better to choose the easiest model: Logistic Regression
 
 # Model interpretability
-
-## -----Shapley values
+- SVM
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
+
+# Bake training data with the SVM recipe (use TRAIN for interpretability)
+svm_train_baked <- bake(prep(svm_rec, training = train), new_data = train)
+X_train_svm <- svm_train_baked %>% dplyr::select(-death)
+
+# Extract fitted kernlab model from last_fit
+svm_fit_model <- svm_final_fit |> extract_fit_parsnip() |> pluck("fit")
+
+svm_probs_train <- predict(svm_fit_model,
+                           as.matrix(X_train_svm),
+                           type="probabilities")[,2]
+
+
+# Probabilities for positive class (1) on TRAIN
+svm_predict_fun <- function(model, newdata) {
+  predict(model, newdata, type = "probabilities")[, 2]
+}
+svm_train_probs <- svm_predict_fun(svm_fit_model, svm_train_baked %>% dplyr::select(-death))
+svm_train_class <- ifelse(svm_train_probs >= 0.5, 1, 0)
+
+# Build preds on TRAIN with TP/TN/FP/FN and explicit row index
+svm_train_preds <- svm_train_baked %>%
+  dplyr::mutate(
+    .pred_prob  = svm_train_probs,
+    .pred_class = factor(svm_train_class, levels = c(0, 1)),
+    death       = factor(death, levels = c(0, 1)),
+    case_type   = case_when(
+      death == 1 & .pred_class == 1 ~ "TP",
+      death == 0 & .pred_class == 0 ~ "TN",
+      death == 0 & .pred_class == 1 ~ "FP",
+      death == 1 & .pred_class == 0 ~ "FN"
+    ),
+    row_index   = row_number()
+  )
+
+# Lists of TRAIN indices by case type (quick scan for selecting observations)
+tp_index <- svm_train_preds %>% dplyr::filter(case_type == "TP") %>% pull(row_index)
+tn_index <- svm_train_preds %>% dplyr::filter(case_type == "TN") %>% pull(row_index)
+fp_index <- svm_train_preds %>% dplyr::filter(case_type == "FP") %>% pull(row_index)
+fn_index <- svm_train_preds %>% dplyr::filter(case_type == "FN") %>% pull(row_index)
+
+cat("TP: ", tp_index, "\n")
+cat("TN: ", tn_index, "\n")
+cat("FP: ", fp_index, "\n")
+cat("FN: ", fn_index, "\n")
+
+```
+- LR
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Bake TRAIN data
+lr_train_baked <- bake(prep(log_reg_rec, training = train), new_data = train)
+X_train_lr <- lr_train_baked %>% dplyr::select(-death)
+
+# Extract the final fitted model
+lr_model <- lr_final_fit %>% extract_fit_parsnip()
+
+lr_fit_model <- lr_final_fit |> extract_fit_parsnip() |> pluck("fit")
+
+# Predict probabilities for positive class (1) on TRAIN 
+lr_train_probs <- predict(lr_fit_model, newx = as.matrix(lr_train_baked %>% dplyr::select(-death)), type = "response")[,1]
+
+final_lr_fit <- workflows::fit(final_lr, data = train)
+lr_train_probs <- predict(final_lr_fit, new_data = train, type = "prob")$.pred_1
+lr_train_class <- ifelse(lr_train_probs >= 0.5, 1, 0)
+
+lr_train_preds <- lr_train_baked %>%
+  dplyr::mutate(
+    .pred_prob  = lr_train_probs,
+    .pred_class = factor(lr_train_class, levels = c(0,1)),
+    death       = factor(death, levels = c(0,1)),
+    case_type   = case_when(
+      death == 1 & .pred_class == 1 ~ "TP",
+      death == 0 & .pred_class == 0 ~ "TN",
+      death == 0 & .pred_class == 1 ~ "FP",
+      death == 1 & .pred_class == 0 ~ "FN"
+    ),
+    row_index = row_number()
+  )
+
+tp_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "TP") %>% pull(row_index)
+tn_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "TN") %>% pull(row_index)
+fp_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "FP") %>% pull(row_index)
+fn_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "FN") %>% pull(row_index)
+
+cat("TP: ", tp_index_lr, "\n")
+cat("TN: ", tn_index_lr, "\n")
+cat("FP: ", fp_index_lr, "\n")
+cat("FN: ", fn_index_lr, "\n")
+
+```
+
+
+## Feature importance
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+w <- t(svm_fit_model@coef[[1]]) %*% svm_fit_model@xmatrix[[1]]
+w <- as.numeric(w)
+
+names(w) <- colnames(svm_fit_model@xmatrix[[1]])
+
+svm_coefs <- tibble(
+  feature = names(w),
+  coefficient = w
+) %>% arrange(desc(abs(coefficient)))
+
+p_svm <- ggplot(svm_coefs, aes(x = reorder(feature, coefficient), y = coefficient)) +
+  geom_col(fill = "#1b9e77") +
+  coord_flip() +
+  labs(
+    title = "SVM Linear Coefficients (on TRAIN)",
+    x = "Feature",
+    y = "Coefficient"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Extract coefficients
+coefs <- tidy(lr_model) %>% dplyr::filter(term != "(Intercept)") %>% arrange(term)
+beta <- coefs$estimate
+names(beta) <- coefs$term
+
+# Project the coefficients directly onto TRAIN features
+#    This gives the per-row contribution of each feature
+lr_coef_proj <- X_train_lr %>%
+  mutate_all(as.numeric) %>%
+  { sweep(., 2, beta, `*`) }  # x_ij * beta_j
+
+lr_coef_df <- tibble(
+  feature = names(beta),
+  coefficient = beta
+) %>%
+  arrange(desc(abs(coefficient)))
+
+p_lr <- ggplot(lr_coef_df, aes(x = reorder(feature, coefficient), y = coefficient)) +
+  geom_col(fill = "#7570b3") +
+  coord_flip() +
+  labs(
+    title = "Logistic Regression Coefficients",
+    x = "Feature",
+    y = "Coefficient"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+```{r}
+p_svm + p_lr 
+```
+
+
+## Shapley values
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+svm_pred <- Predictor$new(
+  model = svm_fit_model,
+  data  = svm_train_baked %>% dplyr::select(-death),
+  y     = svm_train_baked$death,
+  predict.function = svm_predict_fun)
+
+obs_index <- c(2335, 2700, 4199, 7005)
+
+# Calculate Shapley values
+shap_list <- lapply(obs_index, function(i) {
+  x_test <- svm_train_baked[i, -which(names(svm_train_baked)=="death"), drop = FALSE]
+  shap <- Shapley$new(svm_pred, x.interest = x_test)
+  df <- shap$results
+  df$obs_id <- i
+  df
+})
+
+shap_df <- dplyr::bind_rows(shap_list)
+
+ggplot(shap_df, aes(x = feature, y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_manual(values = c("TRUE" = "#F07F28", "FALSE" = "#20B2AA")) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Shapley values – SVM",
+    x = "Features",
+    y = "Contribution (phi)"
+  ) +
+  facet_wrap(~ obs_id, ncol = 2)
+
+```
+```{r}
+## Shapley values – Logistic Regression
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+lr_pred <- Predictor$new(
+  model = lr_fit_model,
+  data  = X_train_lr,
+  y     = lr_train_baked$death
+)
+
+obs_index <- c(2335, 2700, 4199, 7005)
+
+# Calculate Shapley values
+shap_list_lr <- lapply(obs_index, function(i) {
+  x_test <- X_train_lr[i, , drop = FALSE]
+  shap <- Shapley$new(lr_pred, x.interest = x_test)
+  df <- shap$results
+  df$obs_id <- i
+  df
+})
+
+shap_df_lr <- dplyr::bind_rows(shap_list_lr)
+# Visualizzazione
+ggplot(shap_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_manual(values = c("TRUE" = "#F07F28", "FALSE" = "#20B2AA")) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Shapley values – Logistic Regression",
+    x = "Features",
+    y = "Contribution (phi)"
+  ) +
+  facet_wrap(~ obs_id, ncol = 2)
 
 ```
 
@@ -687,7 +936,7 @@ combined %>%
 
 ```
 
-
+## -----Clustering on Shapley values
 
 
 

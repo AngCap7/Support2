@@ -37,6 +37,7 @@ library(treemapify)
 library(plotly)
 library(ranger)
 library(yardstick)
+library(tibble)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -213,7 +214,7 @@ plot(hc, main = "Hierarchical Clustering")
 
 ```{r, warning=FALSE}
 data %>%
-  select(where(is.factor)) %>%
+  dplyr::select(where(is.factor)) %>%
   pivot_longer(cols = everything(), names_to = "variabile", values_to = "valore") %>%
   ggplot(aes(x = valore, y = ..prop.., group = 1, fill = valor)) +
   geom_bar(fill = "#8FD4B8") +
@@ -1142,14 +1143,26 @@ bind_rows(svm_roc, log_reg_roc) %>%
 ```
 
 #---------WORKSPACE2---------
-## Interpretability
+
+
+
+
+
+
+
+
+
+
+
+
+## Interpretability -- è completa nell'altro file
 
 ```{r}
 library(iml)
 
 dplyr::glimpse(train)
 ```
-
+## Predictions on training set
 svm
 ```{r}
 svm_fit_model <- svm_final_fit %>% extract_fit_parsnip() %>% pluck("fit")
@@ -1160,7 +1173,7 @@ svm_predict_fun <- function(model, newdata) {
 }
 
 # Predictor per iml (usa i dati trasformati dalla ricetta!)
-train_baked <- bake(prep(rec, training = train), new_data = train)
+train_baked_svm <- bake(prep(rec, training = train), new_data = train)
 
 svm_pred <- Predictor$new(
   model = svm_fit_model,
@@ -1205,24 +1218,33 @@ lr_pred <- Predictor$new(
 ## Feature Importance
 svm
 ```{r}
-svm_imp <- FeatureImp$new(
-  svm_pred,
-  loss = "ce",          # cross-entropy per classificazione
-  compare = "difference"
-)
+svm_fitted <- fit(final_svm, data = train)
 
-svm_imp_df <- svm_imp$results %>%
-  arrange(desc(importance))
+# Estrai l'oggetto kernlab::ksvm
+svm_fit_model <- svm_fitted %>% extract_fit_parsnip() %>% pluck("fit")
 
-ggplot(svm_imp_df, aes(x = reorder(feature, importance), y = importance)) +
+# Coefficienti = somma pesata dei support vectors
+coefficients <- t(svm_fit_model@coef) %*% svm_fit_model@xmatrix[[1]]
+
+# Tabella ordinata
+coef_table_svm <- tibble(
+  feature = colnames(train %>% select(-death)),
+  coefficient = as.numeric(coefficients)
+) %>%
+  mutate(abs_coeff = abs(coefficient)) %>%
+  arrange(desc(abs_coeff))
+
+# Grafico
+ggplot(coef_table_svm, aes(x = reorder(feature, abs_coeff), y = abs_coeff)) +
   geom_col(fill = "#F07F28") +
   coord_flip() +
   theme_minimal(base_size = 14) +
   labs(
-    title = "Permutation Feature Importance – SVM (RBF)",
+    title = "Feature Importance – Linear SVM",
     x = "Feature",
-    y = "Importance (loss increase)"
+    y = "|Coefficient|"
   )
+
 ```
 lr
 ```{r}
@@ -1380,11 +1402,10 @@ cat("\nFN: ", fn_index)
 
 svm
 ```{r}
-library(ggplot2)
-
 # Indici delle osservazioni da analizzare
 #obs_index <- c(12, 134, 165, 170, 182, 207)
 obs_index <- c(2,3,10)
+
 # Calcolo Shapley values per ciascuna osservazione
 shap_all <- lapply(obs_index, function(i) {
   x_test <- train_baked[i, -which(names(train_baked)=="death"), drop = FALSE]
@@ -1415,7 +1436,7 @@ ggplot(shap_all_df, aes(x = feature, y = phi, fill = phi > 0)) +
 lr
 ```{r}
 # Seleziona alcune osservazioni dal train (ad esempio 2 TP, 2 FP, 1 FN)
-obs_index <- c(tp_index[1:2], fp_index[1:2], fn_index[1])
+obs_index <- c(7,30,100)
 
 # Calcolo Shapley values
 shap_all_lr <- lapply(obs_index, function(i) {
@@ -1447,51 +1468,10 @@ ggplot(shap_all_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
 ## ---LIME
 svm
 ```{r}
-library(lime)
-
-# 1. Creo l'oggetto explainer
-# Nota: la funzione lime richiede dati "raw" senza la colonna target
-explainer_svm <- lime(
-  x = train_baked %>% select(-death),  # dati senza target
-  model = svm_fit_model,
-  bin_continuous = TRUE  # opzionale, discretizza le variabili continue per LIME
-)
-
-# 2. Seleziono alcune osservazioni da spiegare
-# Puoi usare gli indici già definiti prima (es: TP, FP, FN)
-obs_to_explain <- train_baked[c(tp_index[1], fp_index[1], fn_index[1]), -which(names(train_baked) == "death")]
-
-# 3. Genero le spiegazioni LIME
-lime_results <- explain(
-  x = obs_to_explain,
-  explainer = explainer_svm,
-  n_features = 5,        # numero di feature da mostrare
-  n_labels = 1           # classi da spiegare (nel tuo caso positiva = 1)
-)
-
-# 4. Visualizzo i risultati
-plot_features(lime_results) +
-  labs(
-    title = "LIME Explanation – SVM",
-    x = "Feature contribution",
-    y = "Observation"
-  ) +
-  theme_minimal(base_size = 14)
 
 
 ```
 
-```{r}
-
-
-```
-
-svm
-```{r}
-
-
-
-```
 
 lr
 ```{r}
@@ -1503,6 +1483,8 @@ lr
 # EXTRA 2: Unsupervised Learning
 
 Dopo la classificazione supervisionata, Fare clustering sui valori di Shapley
+
+
 
 
 
