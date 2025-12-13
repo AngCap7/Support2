@@ -99,7 +99,7 @@ Analisi dettagliata degli Na delle prime 4 variabili con più Na
 ```{r}
 vars <- c("bun", "urine", "glucose", "adlp")
 
-data |> 
+data |>  
   filter(death == "1") |> 
   summarise(across(all_of(vars), ~ sum(is.na(.)))) |> 
   pivot_longer(everything(),
