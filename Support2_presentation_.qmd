@@ -354,7 +354,7 @@ test$cluster <- apply(coords_test, 1, function(x) {
 
 data_RF <- test
 set.seed(6)
-rf_model <- ranger(cluster ~ ., data = data_RF, mtry = 4, importance = "impurity_corrected")
+rf_model <- ranger(cluster ~ .-id, data = data_RF, mtry = 4, importance = "impurity_corrected")
 
 importance_df <- data.frame(
   variable = names(rf_model$variable.importance),
@@ -375,7 +375,8 @@ ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = impor
 ```{r}
 df <- test %>% mutate(cluster = factor(cluster))
 
-vars <- c("ca","dzgroup","dzclass","aps","charges","hday","d.time","slos","death","num.co","hospdead")
+vars <- c("ca", "dzgroup", "dzclass", "aps", "charges", "hday", "num.co", "d.time", "slos", "death", "hospdead", "age", "income", "crea", "meanbp", "hrt", "wblc", "diabetes", "dnr", "temp")
+
 num_vars <- vars[sapply(df[vars], is.numeric)]
 cat_vars <- setdiff(vars, num_vars)
 
@@ -385,7 +386,7 @@ plot_num <- df %>%
   pivot_longer(-cluster, names_to = "variable", values_to = "value") %>%
   ggplot(aes(x = cluster, y = value, fill = cluster)) +
   geom_boxplot(outlier.size = 0.6, alpha = 0.7) +
-  facet_wrap(~ variable, scales = "free_y", ncol = 3, nrow = 2) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 3, nrow = 4) +
   labs(title = "Boxplot of numeric vars per cluster", x = "Cluster", y = NULL) +
   theme_minimal() +
   theme(legend.position = "none")
@@ -457,7 +458,7 @@ pheatmap(mat,
 
 ```
 
-## 4) Supervised Model: LR vs SVM
+# 4) Supervised Model: LR vs SVM
 
 ```{r,echo=FALSE,include=FALSE}
 tot_data = data_imp
@@ -734,7 +735,7 @@ svm_class <- ifelse(svm_probs >= 0.5, 1, 0)
 
 # Add predictions to dataframe
 train_preds <- train_baked %>%
-  mutate(
+  dplyr::mutate(
     lr_prob = lr_probs,
     lr_class = factor(lr_class, levels = c(0,1)),
     svm_prob = svm_probs,
@@ -755,15 +756,15 @@ train_preds <- train_baked %>%
     row_index = row_number()
   )
 
-tp_lr <- train_preds %>% filter(lr_case == "TP") %>% pull(row_index)
-tn_lr <- train_preds %>% filter(lr_case == "TN") %>% pull(row_index)
-fp_lr <- train_preds %>% filter(lr_case == "FP") %>% pull(row_index)
-fn_lr <- train_preds %>% filter(lr_case == "FN") %>% pull(row_index)
+tp_lr <- train_preds %>% dplyr::filter(lr_case == "TP") %>% pull(row_index)
+tn_lr <- train_preds %>% dplyr::filter(lr_case == "TN") %>% pull(row_index)
+fp_lr <- train_preds %>% dplyr::filter(lr_case == "FP") %>% pull(row_index)
+fn_lr <- train_preds %>% dplyr::filter(lr_case == "FN") %>% pull(row_index)
 
-tp_svm <- train_preds %>% filter(svm_case == "TP") %>% pull(row_index)
-tn_svm <- train_preds %>% filter(svm_case == "TN") %>% pull(row_index)
-fp_svm <- train_preds %>% filter(svm_case == "FP") %>% pull(row_index)
-fn_svm <- train_preds %>% filter(svm_case == "FN") %>% pull(row_index)
+tp_svm <- train_preds %>% dplyr::filter(svm_case == "TP") %>% pull(row_index)
+tn_svm <- train_preds %>% dplyr::filter(svm_case == "TN") %>% pull(row_index)
+fp_svm <- train_preds %>% dplyr::filter(svm_case == "FP") %>% pull(row_index)
+fn_svm <- train_preds %>% dplyr::filter(svm_case == "FN") %>% pull(row_index)
 ```
 
 ## Feature importance
@@ -809,10 +810,10 @@ shap_values_all <- do.call(rbind, lapply(shap_list, function(x) x$results))
 p_svm <- ggplot(shap_values_all, aes(x = phi, y = reorder(feature, abs(phi)), color = phi)) +
   geom_violin(fill = "#458B74", alpha = 0.7, color = "#458B74") +
   labs(
-    title = "Bee Swarm Plot of SHAP Values - SVM",
-    x = "SHAP Value",
+    title = "Bee Swarm Plot of Shapley Values - SVM",
+    x = "Shapley Value",
     y = "Feature",
-    color = "SHAP Value"
+    color = "Shapley Value"
   ) +
   theme_minimal(base_size = 14)
 
@@ -821,7 +822,6 @@ p_svm <- ggplot(shap_values_all, aes(x = phi, y = reorder(feature, abs(phi)), co
 ```{r,echo=FALSE}
 p_lr + p_svm
 ```
-#---------------
 ## Shapley values
 
 ```{r}
@@ -829,92 +829,149 @@ p_lr + p_svm
 #| code-fold: true
 #| code-summary: "code"
 
-svm_predict_fun <- function(model, newdata) {
-  predict(model, newdata, type = "prob")[, 2]
-}
-
-svm_pred <- Predictor$new(
-  model = svm_fit_baked,
-  data  = svm_train_baked,
-  y     =  svm_train_baked$death,
-  predict.function = svm_predict_fun)
-
-obs_index <- c(2335, 2700, 4199, 7005)
-
-# Calculate Shapley values
-shap_list <- lapply(obs_index, function(i) {
-  x_test <- svm_train_baked[i,]
-  shap <- Shapley$new(svm_pred, x.interest = x_test)
-  df <- shap$results
-  df$obs_id <- i
-  df
-})
-
-shap_df <- dplyr::bind_rows(shap_list)
-
-ggplot(shap_df, aes(x = feature, y = phi, fill = phi > 0)) +
-  geom_col(show.legend = FALSE) +
-  coord_flip() +
-  scale_fill_manual(values = c("TRUE" = "#EED2EE", "FALSE" = "#40E0D0")) +
-  theme_minimal(base_size = 14) +
-  labs(
-    title = "Shapley values – SVM",
-    x = "Features",
-    y = "Contribution (phi)"
-  ) +
-  facet_wrap(~ obs_id, ncol = 2)
-
+# First 1 obs: fp in lr, tn in svm
+# Second 1 obs: fn in lr, tp in svm
+# Third 1 obs: fp in svm, tn in lr
+# Fourth 1 obs: fn in svm, tp in lr
+# Last 2 obs: the models agree
+new_obs <- train_baked[c(697, 6793, 2990, 1079, 2324,2325), ] %>% select(-death)
 ```
 
-
-
 ```{r}
-## Shapley values – Logistic Regression
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
-lr_pred <- Predictor$new(
-  model = lr_fit_baked,
-  data  = svm_train_baked,
-  y     = svm_train_baked$death,
-  predict.function = svm_predict_fun
+# observations to plot
+shap_list_svm <- lapply(1:6, function(i) {
+  Shapley$new(predictor_svm, x.interest = new_obs[i, ])
+})
+
+# Predictor SVM
+predictor_svm <- Predictor$new(
+  model = svm_model$fit,
+  data = new_obs,
+  y = as.numeric(train_baked$death[1:6]),
+  predict.fun = function(model, newdata) predict(model, as.matrix(newdata), type = "probabilities")[,2]
 )
 
-obs_index <- c(2335, 2700, 4199, 7005)
+# SHAP for 6 observations
+shap_list_svm <- lapply(1:6, function(i) Shapley$new(predictor_svm, x.interest = new_obs[i, ]))
 
-# Calculate Shapley values
-shap_list_lr <- lapply(obs_index, function(i) {
-  x_test <- svm_train_baked 
-  shap <- Shapley$new(lr_pred, x.interest = x_test)
-  df <- shap$results
-  df$obs_id <- i
-  df
-})
-
-shap_df_lr <- dplyr::bind_rows(shap_list_lr)
-# Visualizzazione
-ggplot(shap_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
-  geom_col(show.legend = FALSE) +
-  coord_flip() +
-  scale_fill_manual(values = c("TRUE" = "#EED2EE", "FALSE" = "#40E0D0")) +
-  theme_minimal(base_size = 14) +
-  labs(
-    title = "Shapley values – Logistic Regression",
-    x = "Features",
-    y = "Contribution (phi)"
-  ) +
-  facet_wrap(~ obs_id, ncol = 2)
-
+shap_values_svm <- do.call(rbind, lapply(shap_list_svm, function(x) x$results)) %>%
+  mutate(obs = rep(1:6, each = ncol(new_obs)))
 ```
-
-## -----LIME
 
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
+lr_coef <- coef(lr_model$fit, s = best_params_lr$penalty) %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "feature") %>%
+  dplyr::rename(coef = 2) %>%
+  dplyr::filter(feature != "(Intercept)")
+
+
+lr_contrib <- new_obs %>%
+  mutate(obs = row_number()) %>%
+  tidyr::pivot_longer(-obs, names_to = "feature", values_to = "value") %>%
+  left_join(lr_coef, by = "feature") %>%
+  mutate(phi = coef * value)
 ```
+
+```{r,include=FALSE,echo=FALSE}
+shap_values_svm <- shap_values_svm %>%
+  dplyr::mutate(model = "SVM")
+
+lr_contrib <- lr_contrib %>%
+  dplyr::mutate(model = "LR")
+
+shap_both <- bind_rows(
+  shap_values_svm %>% dplyr::select(feature, phi, obs, model),
+  lr_contrib      %>% dplyr::select(feature, phi, obs, model)
+)
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+obs1 <- shap_both %>% dplyr::filter(obs == 1)
+
+ggplot(obs1, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip(clip = "off") +
+  facet_wrap(~ model, ncol = 2, scales = "free_y") +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 6),
+    expand = expansion(mult = c(0.05, 0.25))) +
+  scale_fill_manual(values = c("TRUE"="#CC5500", "FALSE"="#458B74")) +
+  labs(
+    title = "Observation 697 – FP LR / TN SVM",
+    x = "Feature",
+    y = "Contribution / Shapley Value")
+```
+```{r}
+#| echo: true
+#| code-fold: false
+obs2 <- shap_both %>% dplyr::filter(obs == 2)
+
+ggplot(obs2, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip(clip = "off") +
+  facet_wrap(~ model, ncol = 2, scales = "free_y") +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 6),
+    expand = expansion(mult = c(0.05, 0.25))) +
+  scale_fill_manual(values = c("TRUE"="#CC5500", "FALSE"="#458B74")) +
+  labs(
+    title = "Observation 6793 – FN LR / TP SVM",
+    x = "Feature",
+    y = "Contribution / Shapley Value")
+```
+
+```{r}
+#| echo: true
+#| code-fold: false
+obs3 <- shap_both %>% dplyr::filter(obs == 3)
+
+ggplot(obs3, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip(clip = "off") +
+  facet_wrap(~ model, ncol = 2, scales = "free_y") +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 6),
+    expand = expansion(mult = c(0.05, 0.25))) +
+  scale_fill_manual(values = c("TRUE"="#CC5500", "FALSE"="#458B74")) +
+  labs(
+    title = "Observation 2990 – TP LR / FN SVM",
+    x = "Feature",
+    y = "Contribution / Shapley Value")
+```
+
+```{r}
+#| echo: true
+#| code-fold: false
+obs4 <- shap_both %>% dplyr::filter(obs == 4)
+
+ggplot(obs4, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip(clip = "off") +
+  facet_wrap(~ model, ncol = 2, scales = "free_y") +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 6),
+    expand = expansion(mult = c(0.05, 0.25))) +
+  scale_fill_manual(values = c("TRUE"="#CC5500", "FALSE"="#458B74")) +
+  labs(
+    title = "Observation 1079 – TN LR / FP SVM",
+    x = "Feature",
+    y = "Contribution / Shapley Value")
+```
+
+
+## -----LIME
 
 ## -----Clustering on Shapley values
