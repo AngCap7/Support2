@@ -47,6 +47,8 @@ library(plotly)
 library(ranger)
 library(yardstick)
 library(tibble)
+library(kableExtra)
+library(ggbeeswarm)  
 ```
 
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
@@ -58,11 +60,13 @@ data = support2
 ```{r, echo = FALSE, warning=FALSE, include=FALSE}
 colnames(data) <- c("id", "age", "death", "sex", "hospdead", "slos", "d.time", "dzgroup", "dzclass", "num.co", "edu", "income", "scoma", "charges", "totcst", "totmcst", "avtisst", "race", "sps", "aps", "surv2m", "surv6m", "hday", "diabetes", "dementia", "ca", "prg2m", "prg6m", "dnr", "dnrday", "meanbp", "wblc", "hrt", "resp", "temp", "pafi", "alb", "bili", "crea", "sod", "ph", "glucose", "bun", "urine", "adlp", "adls", "sfdm2")
 
+support2_na_analysis = data
+
 data <- data |>
   dplyr::mutate(
     across(c(where(is.character), death, hospdead, 
                   diabetes, income, dementia), ~ factor(.x))) |> 
-  dplyr::select(-c(id, scoma, sps, surv2m, surv6m, sfdm2))
+  dplyr::select(-c(scoma, sps, surv2m, surv6m, sfdm2))
 ```
 
 # 1) Dataset
@@ -70,48 +74,48 @@ data <- data |>
 ## Numerical Features
 
 ::: {style="font-size: 37%;"}
--   **age**: age  
--   **slos**: length of hospital stay (days)  
--   **d.time**: follow-up time (days) 
+-   **age**: age\
+-   **slos**: length of hospital stay (days)\
+-   **d.time**: follow-up time (days)
 -   **hday**: number of hospital days up to the clinical event (discharge or death)
--   **num.co**: number of comorbidities  
--   **edu**: years of education  
--   **charges**: charges billed to the patient  
--   **totcst**: cost estimated by the RCC index  
--   **totmcst**: actual cost billed considering bonuses  
--   **avtisst**: Therapeutic Intervention Scoring System (intensity of care)  
--   **aps**: Acute Physiology Score (vital conditions assessment)  
--   **meanbp**: mean blood pressure  
--   **wblc**: white blood cell count  
--   **hrt**: heart rate  
--   **resp**: respiratory rate  
--   **temp**: body temperature  
--   **pafi**: PaO2/FiO2 ratio  
--   **alb**: albumin  
--   **bili**: bilirubin  
--   **crea**: creatinine  
--   **sod**: sodium  
--   **ph**: blood pH  
--   **glucose**, **bun**, **urine**  
--   **adlp**, **adls**: scores indicating daily living activities  
--   **dnrday**: day of the DNR (do-not-resuscitate) decision  
--   **prg2m**, **prg6m**: survival probability at 2 and 6 months  
+-   **num.co**: number of comorbidities\
+-   **edu**: years of education\
+-   **charges**: charges billed to the patient\
+-   **totcst**: cost estimated by the RCC index\
+-   **totmcst**: actual cost billed considering bonuses\
+-   **avtisst**: Therapeutic Intervention Scoring System (intensity of care)\
+-   **aps**: Acute Physiology Score (vital conditions assessment)\
+-   **meanbp**: mean blood pressure\
+-   **wblc**: white blood cell count\
+-   **hrt**: heart rate\
+-   **resp**: respiratory rate\
+-   **temp**: body temperature\
+-   **pafi**: PaO2/FiO2 ratio\
+-   **alb**: albumin\
+-   **bili**: bilirubin\
+-   **crea**: creatinine\
+-   **sod**: sodium\
+-   **ph**: blood pH\
+-   **glucose**, **bun**, **urine**\
+-   **adlp**, **adls**: scores indicating daily living activities\
+-   **dnrday**: day of the DNR (do-not-resuscitate) decision\
+-   **prg2m**, **prg6m**: survival probability at 2 and 6 months\
 :::
 
 ## Categorical Features
 
 ::: {style="font-size: 60%;"}
--   **death**: 0 = alive, 1 = deceased  
--   **sex**: male / female  
--   **hospdead**: death in hospital (0/1)  
--   **diabetes**, **dementia**: presence/absence  
--   **dzgroup**: diagnostic group (e.g., Lung Cancer, Cirrhosis, ARF/MOSF)  
--   **dzclass**: broader diagnostic class  
--   **income**: income category  
--   **race**: white, black, other  
--   **ca**: cancer category (none / local / metastatic)  
--   **dnr**: DNR status (do-not-resuscitate)  
--   **sfdm2**: functional status at 2 months 
+-   **death**: 0 = alive, 1 = deceased\
+-   **sex**: male / female\
+-   **hospdead**: death in hospital (0/1)\
+-   **diabetes**, **dementia**: presence/absence\
+-   **dzgroup**: diagnostic group (e.g., Lung Cancer, Cirrhosis, ARF/MOSF)\
+-   **dzclass**: broader diagnostic class\
+-   **income**: income category\
+-   **race**: white, black, other\
+-   **ca**: cancer category (none / local / metastatic)\
+-   **dnr**: DNR status (do-not-resuscitate)\
+-   **sfdm2**: functional status at 2 months
 :::
 
 # 2) Esplorative Data Analysis
@@ -217,6 +221,7 @@ data <- data |>
 ```
 
 -Imputation for other features: income, wblc, charges, crea, race, dnr
+
 ```{r}
 #| echo: false
 #| code-fold: true
@@ -236,9 +241,8 @@ data_imp <- data_imp |>
 :::
 
 ```{r,echo=FALSE,include=FALSE}
-data_scaled = data |> 
-  dplyr::mutate(across(
-    where(is.numeric),
+data_scaled = data |>
+  mutate(across(where(is.numeric) & !matches("id"),
     ~ as.numeric(scale(.x))
   ))
 
@@ -259,22 +263,23 @@ folds <- vfold_cv(train, v = 10, strata = death)
 ```
 
 # 3) Unsupervised Model : FAMD
+
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
 set.seed(6)
-train <- train|> 
-  dplyr::select(-id) 
+#train <- train|> 
+  #dplyr::select(-id) 
 
-res_famd <- FAMD(train, ncp = 5, graph = FALSE)
+res_famd <- FAMD(train |> dplyr::select(-id), ncp = 5, graph = FALSE)
 
 fviz_screeplot(res_famd)
 ```
 
-
 ## Optimal number of clusters
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -288,6 +293,7 @@ famd_km_res <- kmeans(coords_famd, centers = 2, nstart = 25)
 ```
 
 ## Clustering: Kmeans
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -321,11 +327,14 @@ plot_ly(
 ```
 
 ## Evaluation of results
+
 Clustering coerence is now evaluated on the test set
+
 ```{r,echo=FALSE,include=FALSE}
-test <- test|> 
+test_noid <- test|> 
   select(-id) 
-res_famd_test <- predict(res_famd, newdata = test)
+
+res_famd_test <- predict(res_famd, newdata = test_noid)
 
 coords_test <- as.data.frame(res_famd_test$coord)
 
@@ -337,6 +346,7 @@ test$cluster <- apply(coords_test, 1, function(x) {
 ```
 
 ### Random Forest and Feature importance
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -361,6 +371,7 @@ ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = impor
 ```
 
 ### Patient Profile for each cluster
+
 ```{r}
 df <- test %>% mutate(cluster = factor(cluster))
 
@@ -375,37 +386,43 @@ plot_num <- df %>%
   ggplot(aes(x = cluster, y = value, fill = cluster)) +
   geom_boxplot(outlier.size = 0.6, alpha = 0.7) +
   facet_wrap(~ variable, scales = "free_y", ncol = 3, nrow = 2) +
-  labs(title = "Boxplot variabili numeriche per cluster", x = "Cluster", y = NULL) +
+  labs(title = "Boxplot of numeric vars per cluster", x = "Cluster", y = NULL) +
   theme_minimal() +
   theme(legend.position = "none")
 
 print(plot_num)
 
 # Stampa le categoriali una per una (frequenze relative per cluster)
-for(v in cat_vars){
-  p <- df %>%
-    select(cluster, !!sym(v)) %>%
-    rename(category = !!sym(v)) %>%
-    filter(!is.na(category)) %>%
-    group_by(cluster, category) %>%
-    summarise(n = n(), .groups = "drop") %>%
-    group_by(cluster) %>%
-    mutate(prop = n / sum(n)) %>%
-    ggplot(aes(x = cluster, y = prop, fill = category)) +
-    geom_col(position = position_fill(), color = "black") +
-    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-    labs(title = paste("Distribuzione di", v, "per cluster"),
-         x = "Cluster", y = "Proporzione", fill = v) +
-    theme_minimal() +
-    theme(legend.position = "bottom")
-  print(p)
-}
+# Convertiamo le variabili categoriche in formato long
+df_cat_long <- df %>%
+  select(cluster, all_of(cat_vars)) %>%
+  pivot_longer(
+    cols = -cluster,
+    names_to = "variable",
+    values_to = "category"
+  ) %>%
+  filter(!is.na(category))  # rimuove NA
+
+# Grafico a barre con proporzioni per cluster
+ggplot(df_cat_long, aes(x = cluster, fill = category)) +
+  geom_bar(position = "fill", color = "black") +
+  facet_wrap(~ variable, scales = "free_y", ncol = 3) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Distribuzione delle variabili categoriche per cluster",
+    x = "Cluster",
+    y = "Proporzione",
+    fill = "Categoria"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
 ```
 
-
-
 ## NA evaluation
-NAs seem to be missing at random 
+
+NAs seem to be missing at random
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -423,9 +440,11 @@ support_vars <- setdiff(colnames(support2_na_analysis), common_cols)
 joined$cluster = coords_famd$cluster
 data_NA <- joined %>% select(all_of(support_vars), cluster) |> select(-c(sfdm2, surv2m, sps, surv6m))
 # Percentuali di NA per variabile e cluster ---
-na_summary <- data_NA %>%
-  group_by(cluster) %>%
-  summarise(across(everything(), ~ mean(is.na(.)) * 100))
+na_summary <- dplyr::summarise(
+  dplyr::group_by(data_NA, cluster),
+  dplyr::across(
+    dplyr::everything(),
+    ~ base::mean(base::is.na(.)) * 100))
 
 # Heatmap delle percentuali di NA
 mat <- as.matrix(na_summary[,-1])
@@ -438,14 +457,14 @@ pheatmap(mat,
 
 ```
 
-#---------------------------------
-# 4) Supervised Model: LR vs SVM
+## 4) Supervised Model: LR vs SVM
 
 ```{r,echo=FALSE,include=FALSE}
 tot_data = data_imp
 head(tot_data)
 
 tot_data_scaled = tot_data |> 
+  select(-id) |> 
   mutate(across(
     where(is.numeric),
     ~ as.numeric(scale(.x)))) |> 
@@ -453,6 +472,7 @@ tot_data_scaled = tot_data |>
 ```
 
 ## The target variable
+
 ```{r}
 ggplot(tot_data, aes(x = death, y = ..prop.., group = 1)) +
   geom_bar(fill = "#8FD4B8", color = "grey30") +
@@ -463,13 +483,13 @@ ggplot(tot_data, aes(x = death, y = ..prop.., group = 1)) +
     y = "Percentage"
   ) +
   theme_minimal(base_size = 14)
-
-# balance the class?
 ```
 
 ## SVM Model
+
 ::: {style="font-size: 50%;"}
-- Train Test split
+-   Train Test split
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -484,29 +504,32 @@ test  <- testing(split)
 folds <- vfold_cv(train, v = 10, strata = death)
 ```
 
-- Recipe and Workflow
+-   Recipe and Workflow
+
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
-svm_rec <- recipe(death ~ ., data = train) |>                     
-  step_dummy(all_nominal_predictors())  
+svm_rec <- recipe(death ~ ., data = train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
 
 svm_spec <- svm_linear(
   mode = "classification",
-  cost = tune(),            
-  #rbf_sigma = tune()      
-) |> 
-  set_engine("kernlab", kernel = "vanilladot")
+  cost = best_params_svm$cost
+) %>%
+  set_engine("kernlab")
 
 # Workflow
-svm_wf <- workflow() |>
-  add_model(svm_spec) |>
-  add_recipe(svm_rec)
+svm_wf <- workflow() %>%
+  add_recipe(svm_rec) %>%
+  add_model(svm_spec)
 ```
 
-- Tuning parameters: cost and complexity(rbf_sigma)
+-   Tuning parameters: cost and complexity(rbf_sigma)
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -526,41 +549,36 @@ svm_grid <- tibble(
 #svm_bayes <- tune_bayes(svm_wf, resamples = folds, metrics = metric_set(recall), initial = svm_grid_res, iter = 3, control = control_bayes(verbose = TRUE))
 
 # Best params
-#best_params_svm <- tibble::tibble(cost = 1, rbf_sigma = 0.01) #auc
-best_params_svm <- tibble::tibble(cost = 3.37)#, rbf_sigma = 0.00857) #recall
+best_params_svm <- tibble::tibble(cost = 1) # rbf_sigma = 0.01) #auc
+#best_params_svm <- tibble::tibble(cost = 3.37)#, rbf_sigma = 0.00857) #recall
 final_svm <- finalize_workflow(svm_wf, best_params_svm)
 
 best_params_svm
 ```
 
-- Results
+-   Results
+
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
-svm_final_fit <- last_fit(final_svm, split)
-
-preds_svm <- svm_final_fit %>% collect_predictions()
+svm_final_fit <- last_fit(svm_wf, split)
+collect_predictions(svm_final_fit)
 
 ms_svm <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
 
+preds_svm <- collect_predictions(svm_final_fit)
 ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second")
-
-#svm_final_fit |> collect_predictions() |> conf_mat(truth = death, estimate = .pred_class)
 ```
 :::
 
-
 ## LR Model
+
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
-
-# recipe
-log_reg_rec <- recipe(death ~ ., data = train) |>                     
-  step_dummy(all_nominal_predictors())  
 
 # logistic regression penalized
 log_reg_spec <- logistic_reg(
@@ -573,7 +591,7 @@ log_reg_spec <- logistic_reg(
 # Workflow
 log_reg_wf <- workflow() |>
   add_model(log_reg_spec) |>
-  add_recipe(log_reg_rec)   
+  add_recipe(svm_rec)   
 
 # tuning
 log_reg_grid <- tibble(
@@ -585,42 +603,33 @@ log_reg_grid <- tibble(
 #log_reg_bayes <- tune_bayes(log_reg_wf, resamples = folds, metrics = metric_set(recall), initial = log_reg_grid_res, iter = 3, control = control_bayes(verbose = TRUE, save_pred = TRUE))
 
 
-#best_params_lr <- tibble::tibble(penalty = 0.01) #auc
-best_params_lr <- tibble::tibble(penalty = 0.001) #recall
+best_params_lr <- tibble::tibble(penalty = 0.01) #auc
+#best_params_lr <- tibble::tibble(penalty = 0.001) #recall
 final_lr <- finalize_workflow(log_reg_wf, best_params_lr)
 
 lr_final_fit <- last_fit(final_lr, split)
 
-#lr_final_fit |>collect_predictions() |> conf_mat(truth = death, estimate = .pred_class)
-
-preds_lr <- lr_final_fit %>% collect_predictions()
+preds_lr  <- collect_predictions(lr_final_fit)
 
 ms_lr <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
 
 ms_lr(preds_lr, truth = death, estimate = .pred_class, event_level = "second")
-
 ```
+
 ## SVM vs LR: ROC curve
-```{r,warning=FALSE,include=FALSE}
-metrics_svm <- ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "SVM")
-metrics_lr  <- ms_lr(preds_lr,  truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "LR")
-
-combined <- dplyr::bind_rows(metrics_svm, metrics_lr) %>%
-  dplyr::select(model, .metric, .estimate) %>%
-  pivot_wider(names_from = model, values_from = .estimate)
-```
 
 ```{r}
 #| echo: true
 #| code-fold: false
-svm_test_preds <- collect_predictions(svm_final_fit)
-lr_test_preds  <- collect_predictions(lr_final_fit)
 
-svm_roc <- svm_test_preds %>%
+svm_preds <- collect_predictions(svm_final_fit)
+lr_preds  <- collect_predictions(lr_final_fit)
+
+svm_roc <- svm_preds %>%
   roc_curve(truth = death, .pred_0) %>%
-  mutate(model = "SVM")
+  dplyr::mutate(model = "SVM")
 
-log_reg_roc <- lr_test_preds %>%
+log_reg_roc <- lr_preds %>%
   roc_curve(truth = death, .pred_0) %>%
   mutate(model = "Logistic Regression")
 
@@ -630,7 +639,19 @@ bind_rows(svm_roc, log_reg_roc) %>%
   labs(title = "Test ROC Curve: SVM vs Logistic Regression")
 
 ```
+
+```{r,warning=FALSE,include=FALSE}
+metrics_svm <- ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "SVM")
+metrics_lr  <- ms_lr(preds_lr,  truth = death, estimate = .pred_class, event_level = "second") %>% mutate(model = "LR")
+
+combined <- dplyr::bind_rows(metrics_svm, metrics_lr) %>%
+  dplyr::select(model, .metric, .estimate) %>%
+  pivot_wider(names_from = model, values_from = .estimate)
+```
+
+
 ## SVM vs LR: Confusion matrix and metrics
+
 ```{r}
 #| echo: true
 #| code-fold: false
@@ -640,7 +661,7 @@ p_svm <- autoplot(
   preds_svm %>% conf_mat(truth = death, estimate = .pred_class),
   type = "heatmap"
 ) +
-  scale_fill_gradient(low = "#ccece6", high = "#006d2c") +
+  scale_fill_gradient(low = "#ccece6", high = "#458B74") +
   ggtitle("Confusion Matrix – SVM") +
   theme_minimal(base_size = 14)
 
@@ -648,7 +669,7 @@ p_lr <- autoplot(
   preds_lr %>% conf_mat(truth = death, estimate = .pred_class),
   type = "heatmap"
 ) +
-  scale_fill_gradient(low = "#c6dbef", high = "#08519c") +
+  scale_fill_gradient(low = "#FFA54F", high = "#8B4513") +
   ggtitle("Confusion Matrix – Logistic Regression") +
   theme_minimal(base_size = 14)
 
@@ -680,194 +701,149 @@ combined %>%
                 bootstrap_options = c("striped", "hover", "condensed")) %>%
   column_spec(1, bold = TRUE)
 ```
+
 with very similar results, it is better to choose the easiest model: Logistic Regression
 
 # Model interpretability
-- SVM
+
 ```{r}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
+#| echo: false
+#| code-fold: false
 
-# Bake training data with the SVM recipe (use TRAIN for interpretability)
-svm_train_baked <- bake(prep(svm_rec, training = train), new_data = train)
-X_train_svm <- svm_train_baked %>% dplyr::select(-death)
-
-# Extract fitted kernlab model from last_fit
-svm_fit_model <- svm_final_fit |> extract_fit_parsnip() |> pluck("fit")
-
-svm_probs_train <- predict(svm_fit_model,
-                           as.matrix(X_train_svm),
-                           type="probabilities")[,2]
-
-
-# Probabilities for positive class (1) on TRAIN
-svm_predict_fun <- function(model, newdata) {
-  predict(model, newdata, type = "probabilities")[, 2]
-}
-svm_train_probs <- svm_predict_fun(svm_fit_model, svm_train_baked %>% dplyr::select(-death))
-svm_train_class <- ifelse(svm_train_probs >= 0.5, 1, 0)
-
-# Build preds on TRAIN with TP/TN/FP/FN and explicit row index
-svm_train_preds <- svm_train_baked %>%
-  dplyr::mutate(
-    .pred_prob  = svm_train_probs,
-    .pred_class = factor(svm_train_class, levels = c(0, 1)),
-    death       = factor(death, levels = c(0, 1)),
-    case_type   = case_when(
-      death == 1 & .pred_class == 1 ~ "TP",
-      death == 0 & .pred_class == 0 ~ "TN",
-      death == 0 & .pred_class == 1 ~ "FP",
-      death == 1 & .pred_class == 0 ~ "FN"
-    ),
-    row_index   = row_number()
-  )
-
-# Lists of TRAIN indices by case type (quick scan for selecting observations)
-tp_index <- svm_train_preds %>% dplyr::filter(case_type == "TP") %>% pull(row_index)
-tn_index <- svm_train_preds %>% dplyr::filter(case_type == "TN") %>% pull(row_index)
-fp_index <- svm_train_preds %>% dplyr::filter(case_type == "FP") %>% pull(row_index)
-fn_index <- svm_train_preds %>% dplyr::filter(case_type == "FN") %>% pull(row_index)
-
-cat("TP: ", tp_index, "\n")
-cat("TN: ", tn_index, "\n")
-cat("FP: ", fp_index, "\n")
-cat("FN: ", fn_index, "\n")
-
-```
-- LR
-```{r}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
-
-# Bake TRAIN data
-lr_train_baked <- bake(prep(log_reg_rec, training = train), new_data = train)
-X_train_lr <- lr_train_baked %>% dplyr::select(-death)
-
-# Extract the final fitted model
-lr_model <- lr_final_fit %>% extract_fit_parsnip()
-
-lr_fit_model <- lr_final_fit |> extract_fit_parsnip() |> pluck("fit")
-
-# Predict probabilities for positive class (1) on TRAIN 
-lr_train_probs <- predict(lr_fit_model, newx = as.matrix(lr_train_baked %>% dplyr::select(-death)), type = "response")[,1]
-
+# Fit on train set
 final_lr_fit <- workflows::fit(final_lr, data = train)
-lr_train_probs <- predict(final_lr_fit, new_data = train, type = "prob")$.pred_1
-lr_train_class <- ifelse(lr_train_probs >= 0.5, 1, 0)
+final_svm_fit <- workflows::fit(final_svm, data = train)
 
-lr_train_preds <- lr_train_baked %>%
-  dplyr::mutate(
-    .pred_prob  = lr_train_probs,
-    .pred_class = factor(lr_train_class, levels = c(0,1)),
-    death       = factor(death, levels = c(0,1)),
-    case_type   = case_when(
-      death == 1 & .pred_class == 1 ~ "TP",
-      death == 0 & .pred_class == 0 ~ "TN",
-      death == 0 & .pred_class == 1 ~ "FP",
-      death == 1 & .pred_class == 0 ~ "FN"
+# Extract models
+lr_model <- final_lr_fit %>% extract_fit_parsnip()
+svm_model <- final_svm_fit %>% extract_fit_parsnip()
+
+# Predictions on train
+train_baked <- bake(prep(svm_rec, training = train), new_data = train)
+
+# Logistic Regression
+lr_probs <- predict(final_lr_fit, new_data = train, type = "prob")$.pred_1
+lr_class <- ifelse(lr_probs >= 0.5, 1, 0)
+
+# SVM 
+svm_predict_fun <- function(model, newdata) {
+  predict(model$fit, as.matrix(newdata), type = "probabilities")[,2]
+}
+svm_probs <- svm_predict_fun(svm_model, train_baked %>% select(-death))
+svm_class <- ifelse(svm_probs >= 0.5, 1, 0)
+
+# Add predictions to dataframe
+train_preds <- train_baked %>%
+  mutate(
+    lr_prob = lr_probs,
+    lr_class = factor(lr_class, levels = c(0,1)),
+    svm_prob = svm_probs,
+    svm_class = factor(svm_class, levels = c(0,1)),
+    death = factor(death, levels = c(0,1)),
+    lr_case = case_when(
+      death == 1 & lr_class == 1 ~ "TP",
+      death == 0 & lr_class == 0 ~ "TN",
+      death == 0 & lr_class == 1 ~ "FP",
+      death == 1 & lr_class == 0 ~ "FN"
+    ),
+    svm_case = case_when(
+      death == 1 & svm_class == 1 ~ "TP",
+      death == 0 & svm_class == 0 ~ "TN",
+      death == 0 & svm_class == 1 ~ "FP",
+      death == 1 & svm_class == 0 ~ "FN"
     ),
     row_index = row_number()
   )
 
-tp_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "TP") %>% pull(row_index)
-tn_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "TN") %>% pull(row_index)
-fp_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "FP") %>% pull(row_index)
-fn_index_lr <- lr_train_preds %>% dplyr::filter(case_type == "FN") %>% pull(row_index)
+tp_lr <- train_preds %>% filter(lr_case == "TP") %>% pull(row_index)
+tn_lr <- train_preds %>% filter(lr_case == "TN") %>% pull(row_index)
+fp_lr <- train_preds %>% filter(lr_case == "FP") %>% pull(row_index)
+fn_lr <- train_preds %>% filter(lr_case == "FN") %>% pull(row_index)
 
-cat("TP: ", tp_index_lr, "\n")
-cat("TN: ", tn_index_lr, "\n")
-cat("FP: ", fp_index_lr, "\n")
-cat("FN: ", fn_index_lr, "\n")
-
+tp_svm <- train_preds %>% filter(svm_case == "TP") %>% pull(row_index)
+tn_svm <- train_preds %>% filter(svm_case == "TN") %>% pull(row_index)
+fp_svm <- train_preds %>% filter(svm_case == "FP") %>% pull(row_index)
+fn_svm <- train_preds %>% filter(svm_case == "FN") %>% pull(row_index)
 ```
-
 
 ## Feature importance
+
+LR
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
+# Logistic Regression (LASSO)
+lr_coefs <- coef(lr_model$fit, s = best_params_lr$penalty) %>%
+  as.matrix() %>%
+  as.data.frame()
+lr_coefs$feature <- rownames(lr_coefs)
+colnames(lr_coefs)[1] <- "coefficient"
+lr_coefs <- lr_coefs[-1,]  # remove intercept
 
-w <- t(svm_fit_model@coef[[1]]) %*% svm_fit_model@xmatrix[[1]]
-w <- as.numeric(w)
-
-names(w) <- colnames(svm_fit_model@xmatrix[[1]])
-
-svm_coefs <- tibble(
-  feature = names(w),
-  coefficient = w
-) %>% arrange(desc(abs(coefficient)))
-
-p_svm <- ggplot(svm_coefs, aes(x = reorder(feature, coefficient), y = coefficient)) +
-  geom_col(fill = "#1b9e77") +
+p_lr <- ggplot(lr_coefs, aes(x = reorder(feature, coefficient), y = coefficient)) +
+  geom_bar(stat = "identity", fill = "#FFA54F") +
   coord_flip() +
+  ggtitle("Coefficients - Logistic Regression") +
+  theme_minimal()
+```
+
+SVM
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+predictor_svm <- Predictor$new(
+  model = svm_model$fit,
+  data = train_baked %>% select(-death),
+  y = as.numeric(train_baked$death),
+  predict.fun = function(model, newdata) predict(model, as.matrix(newdata), type = "probabilities")[,2]
+)
+
+shap_list <- lapply(1:min(20, nrow(train_baked)), function(i) {
+  Shapley$new(predictor_svm, x.interest = train_baked[i,] %>% select(-death))
+})
+
+shap_values_all <- do.call(rbind, lapply(shap_list, function(x) x$results))
+
+p_svm <- ggplot(shap_values_all, aes(x = phi, y = reorder(feature, abs(phi)), color = phi)) +
+  geom_violin(fill = "#458B74", alpha = 0.7, color = "#458B74") +
   labs(
-    title = "SVM Linear Coefficients (on TRAIN)",
-    x = "Feature",
-    y = "Coefficient"
+    title = "Bee Swarm Plot of SHAP Values - SVM",
+    x = "SHAP Value",
+    y = "Feature",
+    color = "SHAP Value"
   ) +
   theme_minimal(base_size = 14)
 
 ```
 
-```{r}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
-
-# Extract coefficients
-coefs <- tidy(lr_model) %>% dplyr::filter(term != "(Intercept)") %>% arrange(term)
-beta <- coefs$estimate
-names(beta) <- coefs$term
-
-# Project the coefficients directly onto TRAIN features
-#    This gives the per-row contribution of each feature
-lr_coef_proj <- X_train_lr %>%
-  mutate_all(as.numeric) %>%
-  { sweep(., 2, beta, `*`) }  # x_ij * beta_j
-
-lr_coef_df <- tibble(
-  feature = names(beta),
-  coefficient = beta
-) %>%
-  arrange(desc(abs(coefficient)))
-
-p_lr <- ggplot(lr_coef_df, aes(x = reorder(feature, coefficient), y = coefficient)) +
-  geom_col(fill = "#7570b3") +
-  coord_flip() +
-  labs(
-    title = "Logistic Regression Coefficients",
-    x = "Feature",
-    y = "Coefficient"
-  ) +
-  theme_minimal(base_size = 14)
+```{r,echo=FALSE}
+p_lr + p_svm
 ```
-
-
-```{r}
-p_svm + p_lr 
-```
-
-
+#---------------
 ## Shapley values
+
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
+
+svm_predict_fun <- function(model, newdata) {
+  predict(model, newdata, type = "prob")[, 2]
+}
 
 svm_pred <- Predictor$new(
-  model = svm_fit_model,
-  data  = svm_train_baked %>% dplyr::select(-death),
-  y     = svm_train_baked$death,
+  model = svm_fit_baked,
+  data  = svm_train_baked,
+  y     =  svm_train_baked$death,
   predict.function = svm_predict_fun)
 
 obs_index <- c(2335, 2700, 4199, 7005)
 
 # Calculate Shapley values
 shap_list <- lapply(obs_index, function(i) {
-  x_test <- svm_train_baked[i, -which(names(svm_train_baked)=="death"), drop = FALSE]
+  x_test <- svm_train_baked[i,]
   shap <- Shapley$new(svm_pred, x.interest = x_test)
   df <- shap$results
   df$obs_id <- i
@@ -879,7 +855,7 @@ shap_df <- dplyr::bind_rows(shap_list)
 ggplot(shap_df, aes(x = feature, y = phi, fill = phi > 0)) +
   geom_col(show.legend = FALSE) +
   coord_flip() +
-  scale_fill_manual(values = c("TRUE" = "#F07F28", "FALSE" = "#20B2AA")) +
+  scale_fill_manual(values = c("TRUE" = "#EED2EE", "FALSE" = "#40E0D0")) +
   theme_minimal(base_size = 14) +
   labs(
     title = "Shapley values – SVM",
@@ -889,6 +865,9 @@ ggplot(shap_df, aes(x = feature, y = phi, fill = phi > 0)) +
   facet_wrap(~ obs_id, ncol = 2)
 
 ```
+
+
+
 ```{r}
 ## Shapley values – Logistic Regression
 #| echo: true
@@ -896,16 +875,17 @@ ggplot(shap_df, aes(x = feature, y = phi, fill = phi > 0)) +
 #| code-summary: "code"
 
 lr_pred <- Predictor$new(
-  model = lr_fit_model,
-  data  = X_train_lr,
-  y     = lr_train_baked$death
+  model = lr_fit_baked,
+  data  = svm_train_baked,
+  y     = svm_train_baked$death,
+  predict.function = svm_predict_fun
 )
 
 obs_index <- c(2335, 2700, 4199, 7005)
 
 # Calculate Shapley values
 shap_list_lr <- lapply(obs_index, function(i) {
-  x_test <- X_train_lr[i, , drop = FALSE]
+  x_test <- svm_train_baked 
   shap <- Shapley$new(lr_pred, x.interest = x_test)
   df <- shap$results
   df$obs_id <- i
@@ -917,7 +897,7 @@ shap_df_lr <- dplyr::bind_rows(shap_list_lr)
 ggplot(shap_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
   geom_col(show.legend = FALSE) +
   coord_flip() +
-  scale_fill_manual(values = c("TRUE" = "#F07F28", "FALSE" = "#20B2AA")) +
+  scale_fill_manual(values = c("TRUE" = "#EED2EE", "FALSE" = "#40E0D0")) +
   theme_minimal(base_size = 14) +
   labs(
     title = "Shapley values – Logistic Regression",
@@ -929,6 +909,7 @@ ggplot(shap_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
 ```
 
 ## -----LIME
+
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -937,6 +918,3 @@ ggplot(shap_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
 ```
 
 ## -----Clustering on Shapley values
-
-
-
