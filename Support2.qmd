@@ -309,9 +309,10 @@ test  <- testing(split)
 
 folds <- vfold_cv(train, v = 10, strata = death)
 ```
+
 # Unsupervised Learning
-#----------------------------------------------------------------
-## ❌ PCA + Kmeans (tutte le variabili numeriche)
+
+#---------------------------------------------------------------- \## ❌ PCA + Kmeans (tutte le variabili numeriche)
 
 ```{r, warning=FALSE, }
 num_data_scaled <- data_scaled |>
@@ -329,7 +330,6 @@ ggpairs(
   progress = FALSE   # <-- disattiva i messaggi di avanzamento
 )
 ```
-
 
 PCA, Scelta del numero ragionevole di componenti
 
@@ -564,7 +564,9 @@ xyplot(
 ```
 
 ## ✅❌MCA + Kmeans (3 numeriche categorizzate + tutte categoriche)
-categorizzare le 3 numeriche e fare MCA globale 
+
+categorizzare le 3 numeriche e fare MCA globale
+
 ```{r}
 num_vars <- data_scaled |> select(meanbp, hrt, temp)
 
@@ -615,7 +617,9 @@ fviz_cluster(res.mca_kmeans, data = coords_mca,
              main = "K-means + MCA")
 
 ```
+
 interpretation of results
+
 ```{r}
 clustered_data <- categorical_vars_ext %>%
   mutate(cluster = factor(res.mca_kmeans$cluster))
@@ -659,14 +663,13 @@ plot_cluster_var("meanbp_cat")
 plot_cluster_var("hrt_cat")
 plot_cluster_var("temp_cat")
 ```
-nei cluster non si riesce ad identificare un profilo paziente ben discriminato
-#---------WORKSPACE1---------------
+
+nei cluster non si riesce ad identificare un profilo paziente ben discriminato #---------WORKSPACE1---------------
 
 ## ✅✅FAMD
-FAMD permette di analizzare insieme variabili quantitative e qualitative, trovando pattern e gruppi in modo bilanciato e visivamente interpretabile
-Le variabili numeriche vengono trattate come in PCA (centrate e ridotte)
-Le variabili categoriali vengono trattate come in MCA (codifica disgiuntiva)
-Ogni variabile ha lo stesso peso, così numeriche e categoriali contribuiscono in modo equilibrato
+
+FAMD permette di analizzare insieme variabili quantitative e qualitative, trovando pattern e gruppi in modo bilanciato e visivamente interpretabile Le variabili numeriche vengono trattate come in PCA (centrate e ridotte) Le variabili categoriali vengono trattate come in MCA (codifica disgiuntiva) Ogni variabile ha lo stesso peso, così numeriche e categoriali contribuiscono in modo equilibrato
+
 ```{r,warning=FALSE}
 set.seed(6)
 train <- train|> 
@@ -682,6 +685,7 @@ fviz_famd_var(res_famd, repel = TRUE, col.var = "#8FD4B8") +
 ```
 
 applicazione del kmeans con FAMD
+
 ```{r}
 coords_famd <- res_famd$ind$coord  
 
@@ -694,6 +698,7 @@ famd_km_res <- kmeans(coords_famd, centers = 2, nstart = 25)
 ```
 
 creazione del dataframe FAMD
+
 ```{r}
 coords_famd = as.data.frame(coords_famd)
 
@@ -702,8 +707,8 @@ colnames(coords_famd) = c("Dim1", "Dim2", "Dim3", "Dim4", "Dim5")
 coords_famd$cluster = famd_km_res$cluster
 ```
 
-
 Grafico per visualizzare la divisione in clusters: pazienti con malattie oncologiche vs malattie cardiopolmonari
+
 ```{r}
 ggplot(coords_famd, aes(x = Dim1, y = Dim2, color = factor(cluster))) +
   geom_point(size = 1, alpha = 0.7) +
@@ -713,6 +718,7 @@ ggplot(coords_famd, aes(x = Dim1, y = Dim2, color = factor(cluster))) +
        color = "Cluster") +
   theme_minimal()
 ```
+
 ```{r}
 plot_ly(
   data = coords_famd,
@@ -737,6 +743,7 @@ plot_ly(
 ```
 
 Applicazione del metodo sul test set
+
 ```{r}
 test <- test|> 
   select(-id) 
@@ -752,8 +759,8 @@ test$cluster <- apply(coords_test, 1, function(x) {
 })
 ```
 
-
 Grafico FAMD-Kmeans su test set
+
 ```{r}
 ggplot(coords_test, aes(x = Dim1 , y = Dim2 , color = factor(test$cluster))) +
   geom_point(size = 3, alpha = 0.7) +
@@ -786,7 +793,9 @@ plot_ly(
   )
 
 ```
-Applicazione ranger cluster ~ tutte le variabili e stampa della feature importance
+
+Applicazione ranger cluster \~ tutte le variabili e stampa della feature importance
+
 ```{r}
 #joined <- support2_na_analysis %>% inner_join(train %>% select(id), by = "id")
 #common_cols <- intersect(colnames(support2_na_analysis), colnames(train))
@@ -796,6 +805,7 @@ Applicazione ranger cluster ~ tutte le variabili e stampa della feature importan
 ```
 
 # Surrogate Model: Random Forest
+
 ```{r}
 data_RF <- test
 set.seed(6)
@@ -819,6 +829,7 @@ ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = impor
 ```
 
 ## Patient Profile
+
 ```{r}
 
 df <- test %>% mutate(cluster = factor(cluster))
@@ -861,10 +872,10 @@ for(v in cat_vars){
 }
 ```
 
-Si riescono a distinguere due gruppi di pazienti:
-il primo gruppo è associato alle malattie oncologiche, il secondo  è caratterizzato da pazienti con altre malattie
+Si riescono a distinguere due gruppi di pazienti: il primo gruppo è associato alle malattie oncologiche, il secondo è caratterizzato da pazienti con altre malattie
 
 #Na evaluation
+
 ```{r}
 set.seed(6)
 
@@ -892,8 +903,8 @@ pheatmap(mat,
          main = "NA percentage by cluster")
 
 ```
-Sembra che i NA siano missing at random
-# IODICE
+
+Sembra che i NA siano missing at random \# IODICE
 
 # Supervised Learning
 
@@ -963,6 +974,7 @@ chi_results |> arrange(p_value)
 ```
 
 ## Feature scaling
+
 ```{r}
 tot_data_scaled = tot_data |> 
   mutate(across(
@@ -973,7 +985,6 @@ tot_data_scaled = tot_data |>
 head(tot_data_scaled)
 ```
 
-
 ```{r}
 train_svm = train |> 
   select(-id)
@@ -981,7 +992,6 @@ train_svm = train |>
 test_svm = test |> 
   select(-id)
 ```
-
 
 ## SVM
 
@@ -1055,9 +1065,7 @@ ms(preds, truth = death, estimate = .pred_class, event_level = "second")
 
 ```
 
-
 ## LR penalized
-
 
 ```{r}
 # Specifica modello: logistic regression penalizzata
@@ -1073,7 +1081,6 @@ log_reg_wf <- workflow() |>
   add_model(log_reg_spec) |>
   add_recipe(rec)   # puoi riutilizzare la stessa ricetta
 ```
-
 
 ```{r}
 log_reg_grid <- tibble(
@@ -1099,12 +1106,10 @@ log_reg_bayes <- tune_bayes(
 )
 ```
 
-
 ```{r}
 best_params_lr <- select_best(log_reg_bayes, metric = "roc_auc")
 final_lr <- finalize_workflow(log_reg_wf, best_params_lr)
 ```
-
 
 ```{r}
 lr_final_fit <- last_fit(final_lr, split)
@@ -1116,13 +1121,10 @@ lr_final_fit |>
   conf_mat(truth = death, estimate = .pred_class)
 ```
 
-
-
 ```{r}
 svm_test_preds <- collect_predictions(svm_final_fit)
 lr_test_preds  <- collect_predictions(lr_final_fit)
 ```
-
 
 ```{r}
 # Calcola ROC separatamente e aggiungi la colonna 'model'
@@ -1144,17 +1146,6 @@ bind_rows(svm_roc, log_reg_roc) %>%
 
 #---------WORKSPACE2---------
 
-
-
-
-
-
-
-
-
-
-
-
 ## Interpretability -- è completa nell'altro file
 
 ```{r}
@@ -1162,8 +1153,11 @@ library(iml)
 
 dplyr::glimpse(train)
 ```
+
 ## Predictions on training set
+
 svm
+
 ```{r}
 svm_fit_model <- svm_final_fit %>% extract_fit_parsnip() %>% pluck("fit")
 
@@ -1184,6 +1178,7 @@ svm_pred <- Predictor$new(
 ```
 
 lr
+
 ```{r}
 lr_fitted <- fit(final_lr, data = train)
 
@@ -1215,8 +1210,11 @@ lr_pred <- Predictor$new(
 )
 
 ```
+
 ## Feature Importance
+
 svm
+
 ```{r}
 svm_fitted <- fit(final_svm, data = train)
 
@@ -1246,7 +1244,9 @@ ggplot(coef_table_svm, aes(x = reorder(feature, abs_coeff), y = abs_coeff)) +
   )
 
 ```
+
 lr
+
 ```{r}
 ggplot(coef_table, aes(x = reorder(feature, abs_coeff), y = abs_coeff)) +
   geom_col(fill = "#20B2AA") +
@@ -1269,7 +1269,9 @@ p_lr + p_svm +
 ```
 
 ## ---PDP/ALE
+
 svm
+
 ```{r}
 # PDP su una variabile (es. "age")
 pdp_age <- FeatureEffect$new(
@@ -1284,6 +1286,7 @@ pdp_age$plot() + theme_minimal()
 ```
 
 lr
+
 ```{r}
 pdp_meanbp <- FeatureEffect$new(
   lr_pred,
@@ -1307,6 +1310,7 @@ pdp_meanbp$plot() +
 visualise observations classification on test set
 
 svm
+
 ```{r}
 # Probabilità predette classe positiva
 svm_pred_probs <- predict(svm_fit_model, train_baked %>% select(-death), type = "probabilities")[,2]
@@ -1352,6 +1356,7 @@ cat("\nFN: ", fn_index)
 ```
 
 lr
+
 ```{r}
 
 # Probabilità predette classe positiva (estrai lambda corretto)
@@ -1401,6 +1406,7 @@ cat("\nFN: ", fn_index)
 ```
 
 svm
+
 ```{r}
 # Indici delle osservazioni da analizzare
 #obs_index <- c(12, 134, 165, 170, 182, 207)
@@ -1434,6 +1440,7 @@ ggplot(shap_all_df, aes(x = feature, y = phi, fill = phi > 0)) +
 ```
 
 lr
+
 ```{r}
 # Seleziona alcune osservazioni dal train (ad esempio 2 TP, 2 FP, 1 FN)
 obs_index <- c(7,30,100)
@@ -1464,44 +1471,3 @@ ggplot(shap_all_df_lr, aes(x = feature, y = phi, fill = phi > 0)) +
   facet_wrap(~ obs_id, ncol = 2)
 
 ```
-
-## ---LIME
-svm
-```{r}
-
-
-```
-
-
-lr
-```{r}
-
-
-```
-
-
-# EXTRA 2: Unsupervised Learning
-
-Dopo la classificazione supervisionata, Fare clustering sui valori di Shapley
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

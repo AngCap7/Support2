@@ -1,5 +1,5 @@
 ---
-title: "EXAM"
+title: "Dati Complessi - Final Project"
 author: "Mariateresa Russo e Angelo Capasso"
 format:
   revealjs:
@@ -12,7 +12,10 @@ format:
     preview-links: true
     code-fold: true
     code-summary: "code"
+    font-family: "Times New Roman"
+    font-size: 10px   
 ---
+
 
 ```{r setup, include = FALSE, echo = FALSE}
 library(tidymodels)
@@ -73,7 +76,7 @@ data <- data |>
 
 ## Numerical Features
 
-::: {style="font-size: 37%;"}
+::: {style="font-size: 35%;"}
 -   **age**: age\
 -   **slos**: length of hospital stay (days)\
 -   **d.time**: follow-up time (days)
@@ -120,8 +123,9 @@ data <- data |>
 
 # 2) Esplorative Data Analysis
 
-## Missing values
-
+## Missing values{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+The data presents some features with relevant inflation of missing values (NA)
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -140,16 +144,21 @@ ggplot(missing_summary, aes(x = reorder(variabile, perc_na), y = perc_na)) +
   labs(title = "Features with missing values",
        x = "Feature", y = "% NA")
 ```
+:::
 
-## Numerical Features
+## Numerical Features{style="font-size: 70%;"}
 
-### Correlation matrix
-
+### Correlation matrix{style="font-size: 60%;"}
+:::{style="font-size: 70%;"}
+Globally, the most part of features present low correlation. Some considerable correlated features are: 
+- totmcst, totcst, charges
+- dnrday, slos
+- adls, adlp
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
-num_data <- data[, sapply(data, is.numeric)]
+num_data <- data[, sapply(data, is.numeric)] %>% dplyr::select(-id)
 
 corr_mat <- cor(num_data, use = "pairwise.complete.obs")
 
@@ -162,8 +171,10 @@ levelplot(
   col.regions = colorRampPalette(c("#2A5783", "white", "#F07F28"))(100)
 )
 ```
+:::
+## Numerical Features{style="font-size: 70%;"}
 
-### Hierarchical Clustering
+### Hierarchical Clustering{style="font-size: 60%;"}
 
 ```{r}
 #| echo: true
@@ -176,8 +187,9 @@ hc <- hclust(dist_mat, method = "complete")
 plot(hc, main = "Hierarchical Clustering")
 ```
 
-## Categorical Features
-
+## Categorical Features{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+Relative frequency of categorical features
 ```{r, warning=FALSE}
 #| echo: true
 #| code-fold: true
@@ -189,7 +201,7 @@ data %>%
   geom_bar(fill = "#8FD4B8") +
   facet_wrap(~ variabile, scales = "free") +
   scale_y_continuous(labels = scales::percent_format()) +
-  labs(title = "Categorical Features-frequency distribution",
+  labs(title = "Categorical Features - class Frequency",
        x = "Category", y = "Percentage") +
   theme_minimal(base_size = 12) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
@@ -197,8 +209,9 @@ data %>%
         strip.text = element_text(size = 10))
 
 ```
+::: 
 
-## Manage Missing Values
+## Manage Missing Values{style="font-size: 70%;"}
 
 ::: {style="font-size: 50%;"}
 -Remove features with more than 30% NA: bun, urine, glucose, adlp
@@ -222,11 +235,11 @@ data <- data |>
 
 -Imputation for other features: income, wblc, charges, crea, race, dnr
 
-```{r}
+```{r,warning=FALSE,echo=FALSE}
 #| echo: false
 #| code-fold: true
 #| code-summary: "code"
-#| 
+
 data <- data |>
   dplyr::mutate(income = fct_explicit_na(income, na_level = "nd"))
 
@@ -235,8 +248,6 @@ set.seed(6)
 data_imp <- VIM::kNN(data, variable = c("wblc","charges","crea","race","dnr"), k = 5)
 data_imp <- data_imp |> 
   dplyr::select(-c(wblc_imp, charges_imp, crea_imp, race_imp, dnr_imp, income, race))
-
-#income,race
 ```
 :::
 
@@ -262,24 +273,38 @@ test  <- testing(split)
 folds <- vfold_cv(train, v = 10, strata = death)
 ```
 
-# 3) Unsupervised Model : FAMD
+# 3) Unsupervised Model : FAMD{style="font-size: 70%;"}
+:::{style="font-size: 60%;"}
+Factor Analysis of Mixed Data (FAMD) is used for handling datasets with both numerical and categorical variables is:
+- **Standardize numerical variables**  
+  Center and scale all quantitative features so they contribute equally\
+- **Encode and weight categorical variables**  
+  Transform categorical features into disjunctive (dummy) coding and apply weights so each categorical variable contributes the same as a numerical one\
+- **Construct the combined matrix**  
+  Merge standardized numerical variables and weighted categorical variables into a single analysis matrix\
+- **Apply Singular Value Decomposition (SVD)**  
+  Perform SVD on the combined matrix to extract principal components that summarize the joint structure of numerical and categorical features\
+:::
 
+## Choose the best number of components{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+The choice of the best number of components followed the elbow method, the screeplot shows the quantity of inertia for each dimension
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
 set.seed(6)
-#train <- train|> 
-  #dplyr::select(-id) 
 
 res_famd <- FAMD(train |> dplyr::select(-id), ncp = 5, graph = FALSE)
 
 fviz_screeplot(res_famd)
 ```
+:::
 
-## Optimal number of clusters
-
+## Optimal number of clusters{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+The choice of the optimal number of clusters is taken using the silhouette metric
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -291,9 +316,11 @@ fviz_nbclust(coords_famd, kmeans)
 set.seed(6)
 famd_km_res <- kmeans(coords_famd, centers = 2, nstart = 25)
 ```
+:::
 
-## Clustering: Kmeans
-
+## Clustering: Kmeans{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+Clustering is applied on the five dimensions reached with FAMD
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -325,11 +352,11 @@ plot_ly(
     )
   )
 ```
+:::
 
-## Evaluation of results
-
-Clustering coerence is now evaluated on the test set
-
+## Evaluation of results{style="font-size: 70%;"}
+:::{style="font-size: 60%;"}
+Clustering coerence is now evaluated on the test set. By training a surrogate model (Random Forest) with target variable the id cluster, the related feature importance is plotted to show which are the features that contributed the most into cluster separation. Then, for the two clusters, an ipothetic patient profile is presented
 ```{r,echo=FALSE,include=FALSE}
 test_noid <- test|> 
   select(-id) 
@@ -344,8 +371,10 @@ test$cluster <- apply(coords_test, 1, function(x) {
   which.min(colSums((t(famd_km_res$centers) - x)^2))
 })
 ```
+:::
 
-### Random Forest and Feature importance
+## Evaluation of results{style="font-size: 70%;"}
+### Random Forest and Feature importance{style="font-size: 60%;"}
 
 ```{r}
 #| echo: true
@@ -370,7 +399,8 @@ ggplot(head(importance_df, 20), aes(x = reorder(variable, importance), y = impor
   theme_minimal()
 ```
 
-### Patient Profile for each cluster
+## Evaluation of results{style="font-size: 70%;"}
+### Patient Profile for each cluster{style="font-size: 60%;"}
 
 ```{r}
 df <- test %>% mutate(cluster = factor(cluster))
@@ -380,7 +410,6 @@ vars <- c("ca", "dzgroup", "dzclass", "aps", "charges", "hday", "num.co", "d.tim
 num_vars <- vars[sapply(df[vars], is.numeric)]
 cat_vars <- setdiff(vars, num_vars)
 
-# Boxplot numeriche in griglia 2 righe x 3 colonne
 plot_num <- df %>%
   select(cluster, all_of(num_vars)) %>%
   pivot_longer(-cluster, names_to = "variable", values_to = "value") %>%
@@ -392,9 +421,11 @@ plot_num <- df %>%
   theme(legend.position = "none")
 
 print(plot_num)
+```
 
-# Stampa le categoriali una per una (frequenze relative per cluster)
-# Convertiamo le variabili categoriche in formato long
+## Evaluation of results{style="font-size: 70%;"}
+### Patient Profile for each cluster{style="font-size: 60%;"}
+```{r}
 df_cat_long <- df %>%
   select(cluster, all_of(cat_vars)) %>%
   pivot_longer(
@@ -402,28 +433,26 @@ df_cat_long <- df %>%
     names_to = "variable",
     values_to = "category"
   ) %>%
-  filter(!is.na(category))  # rimuove NA
+  filter(!is.na(category))  
 
-# Grafico a barre con proporzioni per cluster
 ggplot(df_cat_long, aes(x = cluster, fill = category)) +
   geom_bar(position = "fill", color = "black") +
   facet_wrap(~ variable, scales = "free_y", ncol = 3) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   labs(
-    title = "Distribuzione delle variabili categoriche per cluster",
+    title = "Categorical vars distribution per cluster",
     x = "Cluster",
-    y = "Proporzione",
-    fill = "Categoria"
+    y = "Proportion",
+    fill = "Category"
   ) +
   theme_minimal() +
   theme(legend.position = "bottom")
 
 ```
 
-## NA evaluation
-
-NAs seem to be missing at random
-
+## NA evaluation{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+Considering the number of missing values for each feature in each cluster, missing values seem to be missing at random
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -440,14 +469,14 @@ common_cols <- intersect(colnames(support2_na_analysis), colnames(train))
 support_vars <- setdiff(colnames(support2_na_analysis), common_cols)
 joined$cluster = coords_famd$cluster
 data_NA <- joined %>% select(all_of(support_vars), cluster) |> select(-c(sfdm2, surv2m, sps, surv6m))
-# Percentuali di NA per variabile e cluster ---
+
 na_summary <- dplyr::summarise(
   dplyr::group_by(data_NA, cluster),
   dplyr::across(
     dplyr::everything(),
     ~ base::mean(base::is.na(.)) * 100))
 
-# Heatmap delle percentuali di NA
+# Heatmap
 mat <- as.matrix(na_summary[,-1])
 rownames(mat) <- paste("Cluster", na_summary$cluster)
 
@@ -457,8 +486,9 @@ pheatmap(mat,
          main = "NA percentage by cluster")
 
 ```
+:::
 
-# 4) Supervised Model: LR vs SVM
+# 4) Supervised Model: LR vs SVM{style="font-size: 70%;"}
 
 ```{r,echo=FALSE,include=FALSE}
 tot_data = data_imp
@@ -472,8 +502,9 @@ tot_data_scaled = tot_data |>
   drop_na()
 ```
 
-## The target variable
-
+## The target variable{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+The target variable death indicates whether a hospitalized patient died during or after their stay
 ```{r}
 ggplot(tot_data, aes(x = death, y = ..prop.., group = 1)) +
   geom_bar(fill = "#8FD4B8", color = "grey30") +
@@ -485,12 +516,12 @@ ggplot(tot_data, aes(x = death, y = ..prop.., group = 1)) +
   ) +
   theme_minimal(base_size = 14)
 ```
+:::
 
-## SVM Model
-
-::: {style="font-size: 50%;"}
+## SVM Model{style="font-size: 70%;"}
+::: {style="font-size: 60%;"}
+The model Support Vector classifier was trained to obtain the best classification for the target variable classes: Alive or Death. Procedure:
 -   Train Test split
-
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -505,8 +536,7 @@ test  <- testing(split)
 folds <- vfold_cv(train, v = 10, strata = death)
 ```
 
--   Recipe and Workflow
-
+-   Recipe, Model specification and Workflow
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -529,8 +559,7 @@ svm_wf <- workflow() %>%
   add_model(svm_spec)
 ```
 
--   Tuning parameters: cost and complexity(rbf_sigma)
-
+-   Tuning parameters: cost 
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -539,8 +568,8 @@ svm_wf <- workflow() %>%
 set.seed(6)
 
 svm_grid <- tibble(
-  cost = c(0.1, 1, 10, 100),
-  rbf_sigma = c(0.001, 0.01, 0.1, 1)
+  cost = c(0.1, 1, 10, 100)
+  #rbf_sigma = c(0.001, 0.01, 0.1, 1)
 )
 
 # Step 1: gridsearch
@@ -558,14 +587,12 @@ best_params_svm
 ```
 
 -   Results
-
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 
 svm_final_fit <- last_fit(svm_wf, split)
-collect_predictions(svm_final_fit)
 
 ms_svm <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
 
@@ -574,8 +601,9 @@ ms_svm(preds_svm, truth = death, estimate = .pred_class, event_level = "second")
 ```
 :::
 
-## LR Model
-
+## LR Model{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+A more interpretable and easier model, the Logistic Regression, is computed to evaluate which is the best model to use in this study. the procedure is the same of SVM, here the tuning parameter defines the Lasso penalty for implicit feature selection
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -614,14 +642,18 @@ preds_lr  <- collect_predictions(lr_final_fit)
 
 ms_lr <- yardstick::metric_set(yardstick::accuracy, yardstick::recall, yardstick::precision)
 
+log_reg_spec
+best_params_lr
 ms_lr(preds_lr, truth = death, estimate = .pred_class, event_level = "second")
 ```
+:::
 
-## SVM vs LR: ROC curve
+## SVM vs LR: ROC curve{style="font-size: 70%;"}
 
 ```{r}
 #| echo: true
-#| code-fold: false
+#| code-fold: true
+#| code-summary: "code"
 
 svm_preds <- collect_predictions(svm_final_fit)
 lr_preds  <- collect_predictions(lr_final_fit)
@@ -651,14 +683,17 @@ combined <- dplyr::bind_rows(metrics_svm, metrics_lr) %>%
 ```
 
 
-## SVM vs LR: Confusion matrix and metrics
+## SVM vs LR: Confusion matrix and metrics{style="font-size: 70%;"}
 
 ```{r}
 #| echo: true
-#| code-fold: false
-
+#| code-fold: true
+#| code-summary: "code"
+#| fig-width: 12
+#| fig-height: 4
+#| out-width: "100%"
 #confusion matrix
-p_svm <- autoplot(
+mat_svm <- autoplot(
   preds_svm %>% conf_mat(truth = death, estimate = .pred_class),
   type = "heatmap"
 ) +
@@ -666,7 +701,7 @@ p_svm <- autoplot(
   ggtitle("Confusion Matrix – SVM") +
   theme_minimal(base_size = 14)
 
-p_lr <- autoplot(
+mat_lr <- autoplot(
   preds_lr %>% conf_mat(truth = death, estimate = .pred_class),
   type = "heatmap"
 ) +
@@ -689,7 +724,7 @@ tbl <- combined %>%
   row_spec(0, background = "#f7f7f7")
 
 
-p_svm | p_lr
+mat_svm | mat_lr
 
 combined %>%
   dplyr::rename(
@@ -703,13 +738,14 @@ combined %>%
   column_spec(1, bold = TRUE)
 ```
 
-with very similar results, it is better to choose the easiest model: Logistic Regression
 
-# Model interpretability
-
+# Model interpretability{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+Interpretable machine learning is useful to understand the model decision. Logistic regression is a white-box model, by interpreting coefficients it is easy to understand how the model reasoned. By contrast, the linear SVC optimizes a hinge loss to maximize the margin between classes. Its coefficients define the orientation of the separating hyperplane, but they do not map to probabilities or intuitive effect sizes. The decision function depends heavily on support vectors, the critical points near the boundary, rather than on global relationships across all data. As a result, the reasoning behind predictions is tied to geometric separation rather than interpretable statistical associations. Since SVC is considered a black-box model, interpretable machine learning methods were adopted in order to interpret model coherence
 ```{r}
-#| echo: false
-#| code-fold: false
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 
 # Fit on train set
 final_lr_fit <- workflows::fit(final_lr, data = train)
@@ -766,10 +802,12 @@ tn_svm <- train_preds %>% dplyr::filter(svm_case == "TN") %>% pull(row_index)
 fp_svm <- train_preds %>% dplyr::filter(svm_case == "FP") %>% pull(row_index)
 fn_svm <- train_preds %>% dplyr::filter(svm_case == "FN") %>% pull(row_index)
 ```
+:::
 
-## Feature importance
-
-LR
+## Feature importance{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+Feature importance is evaluated with two different methods for the two models:
+- LR, models coefficients
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -789,7 +827,7 @@ p_lr <- ggplot(lr_coefs, aes(x = reorder(feature, coefficient), y = coefficient)
   theme_minimal()
 ```
 
-SVM
+-SVM, summarised Shapley Values (Bee Swarm plot)
 ```{r}
 #| echo: true
 #| code-fold: true
@@ -801,7 +839,7 @@ predictor_svm <- Predictor$new(
   predict.fun = function(model, newdata) predict(model, as.matrix(newdata), type = "probabilities")[,2]
 )
 
-shap_list <- lapply(1:min(20, nrow(train_baked)), function(i) {
+shap_list <- lapply(1:min(200, nrow(train_baked)), function(i) {
   Shapley$new(predictor_svm, x.interest = train_baked[i,] %>% select(-death))
 })
 
@@ -820,15 +858,29 @@ p_svm <- ggplot(shap_values_all, aes(x = phi, y = reorder(feature, abs(phi)), co
 ```
 
 ```{r,echo=FALSE}
-p_lr + p_svm
-```
-## Shapley values
-
-```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
+#| fig-width: 12
+#| fig-height: 4
+#| out-width: "100%"
 
+(p_lr | p_svm) &
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(size = 12),
+    axis.title = element_text(size = 9),
+    axis.text = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 9)
+  )
+```
+:::
+
+## Shapley values{style="font-size: 70%;"}
+:::{style="font-size: 70%;"}
+Shapley values were computed for the SVM predictions and compared with the logistic regression coefficients. They provide a local explanation of how each model makes predictions for individual observations. The analysis focused on observations for which the two models produced discordant predictions, in order to highlight differences in their decision mechanisms
+```{r,include=FALSE}
 # First 1 obs: fp in lr, tn in svm
 # Second 1 obs: fn in lr, tp in svm
 # Third 1 obs: fp in svm, tn in lr
@@ -837,11 +889,7 @@ p_lr + p_svm
 new_obs <- train_baked[c(697, 6793, 2990, 1079, 2324,2325), ] %>% select(-death)
 ```
 
-```{r}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
-
+```{r,include=FALSE}
 # observations to plot
 shap_list_svm <- lapply(1:6, function(i) {
   Shapley$new(predictor_svm, x.interest = new_obs[i, ])
@@ -862,11 +910,7 @@ shap_values_svm <- do.call(rbind, lapply(shap_list_svm, function(x) x$results)) 
   mutate(obs = rep(1:6, each = ncol(new_obs)))
 ```
 
-```{r}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
-
+```{r,include=FALSE}
 lr_coef <- coef(lr_model$fit, s = best_params_lr$penalty) %>%
   as.matrix() %>%
   as.data.frame() %>%
@@ -894,6 +938,9 @@ shap_both <- bind_rows(
   lr_contrib      %>% dplyr::select(feature, phi, obs, model)
 )
 ```
+:::
+
+---
 
 ```{r}
 #| echo: true
@@ -914,9 +961,13 @@ ggplot(obs1, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
     x = "Feature",
     y = "Contribution / Shapley Value")
 ```
+
+---
+
 ```{r}
 #| echo: true
-#| code-fold: false
+#| code-fold: true
+#| code-summary: "code"
 obs2 <- shap_both %>% dplyr::filter(obs == 2)
 
 ggplot(obs2, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
@@ -933,9 +984,12 @@ ggplot(obs2, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
     y = "Contribution / Shapley Value")
 ```
 
+---
+
 ```{r}
 #| echo: true
-#| code-fold: false
+#| code-fold: true
+#| code-summary: "code"
 obs3 <- shap_both %>% dplyr::filter(obs == 3)
 
 ggplot(obs3, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
@@ -952,9 +1006,12 @@ ggplot(obs3, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
     y = "Contribution / Shapley Value")
 ```
 
+---
+
 ```{r}
 #| echo: true
-#| code-fold: false
+#| code-fold: true
+#| code-summary: "code"
 obs4 <- shap_both %>% dplyr::filter(obs == 4)
 
 ggplot(obs4, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
@@ -971,7 +1028,3 @@ ggplot(obs4, aes(x = reorder(feature, phi), y = phi, fill = phi > 0)) +
     y = "Contribution / Shapley Value")
 ```
 
-
-## -----LIME
-
-## -----Clustering on Shapley values
